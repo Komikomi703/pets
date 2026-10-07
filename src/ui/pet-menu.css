@@ -1,0 +1,34 @@
+.pet-menu {
+  position: fixed;
+  z-index: 100;
+  width: 210px;
+  max-width: calc(100vw - 16px);
+  padding: 6px;
+  border: 1px solid #dfcdbc;
+  border-radius: 12px;
+  background: #fffcf7;
+  box-shadow: 0 8px 28px #70544726;
+}
+.pet-menu button {
+  display: block;
+  width: 100%;
+  padding: 11px 12px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: #705447;
+  text-align: left;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.pet-menu button:hover, .pet-menu button:focus-visible {
+  background: #f4e8db;
+  outline: 2px solid #bb9075;
+  outline-offset: -2px;
+}
+.pet-menu button:last-child {
+  margin-top: 4px;
+  border-top: 1px solid #eaded0;
+  border-radius: 0 0 7px 7px;
+}

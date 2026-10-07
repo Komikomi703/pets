@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "local",
+  "description": "ローカルの猫と設定画面のイベント購読のみ。ファイル・シェル・ネットワーク権限なし。",
+  "windows": ["pet", "settings"],
+  "permissions": ["core:event:allow-listen", "core:event:allow-unlisten"]
+}

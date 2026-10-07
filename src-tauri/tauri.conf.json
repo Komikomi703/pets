@@ -1,0 +1,88 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "MadoNeko",
+  "version": "1.0.0",
+  "identifier": "com.madoneko.desktop",
+  "build": {
+    "beforeDevCommand": "pnpm dev",
+    "devUrl": "http://127.0.0.1:1420",
+    "beforeBuildCommand": "pnpm build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "pet",
+        "create": false,
+        "title": "まどねこ",
+        "url": "index.html",
+        "width": 256,
+        "height": 224,
+        "transparent": true,
+        "decorations": false,
+        "shadow": false,
+        "resizable": false,
+        "skipTaskbar": true,
+        "alwaysOnTop": true,
+        "focus": false,
+        "focusable": false,
+        "visible": false,
+        "dragDropEnabled": false
+      },
+      {
+        "label": "settings",
+        "create": false,
+        "title": "まどねこ — お世話と設定",
+        "url": "index.html?view=settings",
+        "width": 860,
+        "height": 740,
+        "minWidth": 640,
+        "minHeight": 550,
+        "center": true,
+        "visible": false,
+        "backgroundColor": "#FAF7F0",
+        "dragDropEnabled": false
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src ipc: http://ipc.localhost; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'",
+      "devCsp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src ipc: http://ipc.localhost http://127.0.0.1:1420 ws://127.0.0.1:1420; object-src 'none'; base-uri 'none'",
+      "capabilities": [
+        "local"
+      ]
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": [
+      "nsis"
+    ],
+    "shortDescription": "デスクトップの小さな同居人",
+    "longDescription": "オフラインで暮らせる、クリーム色の小さな猫。",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.ico"
+    ],
+    "windows": {
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper",
+        "silent": true
+      },
+      "nsis": {
+        "installMode": "currentUser",
+        "languages": [
+          "Japanese"
+        ],
+        "displayLanguageSelector": false,
+        "installerHooks": "windows/hooks.nsh"
+      }
+    },
+    "licenseFile": "../LICENSE",
+    "resources": {
+      "../LICENSE": "licenses/LICENSE.txt",
+      "../docs/THIRD_PARTY_NOTICES.txt": "licenses/THIRD_PARTY_NOTICES.txt"
+    }
+  }
+}
