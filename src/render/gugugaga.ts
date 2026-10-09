@@ -1,16 +1,24 @@
 import type { HitMask, PetFrame } from '../core/types';
-import { blinkAt, ease, footstep } from './motion';
+import { blinkAt, ease, footstep, follow, jumpAt } from './motion';
 import { drawGround, drawHearts } from './accents';
 
 let atlas: HTMLImageElement | null = null;
+let heads: HTMLImageElement | null = null;
+let headBlend: CanvasRenderingContext2D | null = null;
 let loading: Promise<void> | null = null;
 export function loadGugugaga(): Promise<void> {
-  return loading ??= new Promise((resolve, reject) => {
-    const image = new Image();
-    image.onload = () => { atlas = image; resolve(); };
-    image.onerror = () => { loading = null; reject(new Error('ググガガの画像を読み込めませんでした。')); };
-    image.src = '/characters/gugugaga/parts-v3.png';
+  const load = (src: string): Promise<HTMLImageElement> => new Promise((resolve, reject) => {
+    const image = new Image(); image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error('ググガガの画像を読み込めませんでした。'));
+    image.src = src;
   });
+  return loading ??= Promise.all([
+    load('/characters/gugugaga/parts-v3.png'), load('/characters/gugugaga/heads-v4.png'),
+  ]).then(([body, angles]) => {
+    atlas = body; heads = angles;
+    const canvas = document.createElement('canvas'); canvas.width = 232; canvas.height = 180;
+    headBlend = canvas.getContext('2d');
+  }).catch(error => { loading = null; throw error; });
 }
 // Tight alpha bounds, not equal grid cells: the generated atlas has uneven spacing.
 const parts = {
@@ -45,23 +53,34 @@ interface Pose {
   lift: number; tilt: number; head: number; breath: number;
   left: number; right: number; leftX: number; rightX: number; leftFoot: number; rightFoot: number;
   squat: number; closed: number; smile: number; pout: number; lean: number; yawn: number;
+  turn: number; brow: number; surprise: number; hair: number; hood: number;
 }
 function pose(frame: PetFrame, phase: number, elapsed: number): Pose {
-  const t = frame.time, state = frame.state;
+  const t = frame.time * (frame.motionRate ?? 1), state = frame.state;
   const p: Pose = { lift: 0, tilt: 0, head: Math.sin(elapsed * .65) * .014, breath: Math.sin(elapsed * 2) * .65,
     left: .04, right: -.04, leftX: 0, rightX: 0, leftFoot: 0, rightFoot: 0,
-    squat: 0, closed: blinkAt(elapsed), smile: 0, pout: 0, lean: 0, yawn: 0 };
-  if (state === 'observe') { p.head = Math.sin(t * 2.1) * .16; p.lean = Math.sin(t * 2.1) * 3; }
+    squat: 0, closed: blinkAt(elapsed), smile: 0, pout: 0, lean: 0, yawn: 0,
+    turn: frame.lookX * .75, brow: 0, surprise: 0, hair: 0, hood: 0 };
+  if (state === 'observe') {
+    const notice = 1 - ease(t / .4);
+    p.surprise = notice * .8; p.brow = notice * 2;
+    p.head = frame.lookX * .16 * ease(t / .45); p.lean = frame.lookX * 3;
+  }
   if (state === 'yawn') {
     p.yawn = Math.sin(Math.min(1, t / 2.4) * Math.PI) ** 2;
     p.closed = p.yawn; p.head = -p.yawn * .1; p.left = -.9 * p.yawn; p.squat = p.yawn * 3;
   }
   if (state === 'sniff') { p.head = .12 + Math.sin(t * 9) * .035; p.lean = 5; p.squat = 5; p.left = -.2; p.right = .2; }
-  if (state === 'wave') { p.right = -1.35 + Math.sin(t * 8) * .28; p.head = -.1; p.smile = .85; p.closed = .9; }
+  if (state === 'wave') {
+    const greet = ease((t - .25) / .3) * (1 - ease((t - 1.8) / .55));
+    p.head = -.12 * ease(t / .25); p.brow = 1;
+    const wave = (-1.3 + Math.sin(t * (7 + (frame.variation ?? .5) * 2)) * .22) * greet;
+    if (frame.lookX < -.2) p.left = -wave; else p.right = wave;
+    p.smile = .85 * greet; p.closed = .85 * greet;
+  }
   if (state === 'hop') {
-    const flight = Math.min(1, Math.max(0, (t - .3) / .7));
-    p.lift = -Math.sin(flight * Math.PI) * 22;
-    p.squat = (t < .3 ? Math.sin(t / .3 * Math.PI) : Math.sin(Math.min(1, Math.max(0, (t - 1) / .6)) * Math.PI)) * 6;
+    const jump = jumpAt(t, 22);
+    p.lift = jump.lift; p.squat = jump.squash * 6;
     p.left = .6; p.right = -.6; p.smile = .85;
   }
   if (state === 'idle') p.head += Math.sin(Math.min(1, t / 1.5) * Math.PI) * .075;
@@ -75,34 +94,39 @@ function pose(frame: PetFrame, phase: number, elapsed: number): Pose {
     // Flippers follow the weight shift with a small delay.
     p.left += Math.cos(phase - .5) * .12 * moving; p.right += Math.cos(phase - .5) * .12 * moving;
     p.head = -p.tilt * .5; p.lean = frame.direction * 1.4;
+    p.turn = frame.direction * .8;
     if (state === 'play') { p.left += .35; p.right -= .35; p.smile = .8; }
   }
   if (state === 'sit' || state === 'sleep') { p.squat = 8; p.left = -.16; p.right = .16; }
-  if (state === 'sleep') { p.closed = 1; p.head = .12; p.breath = Math.sin(elapsed * 1.5) * .8; p.lean = -2; }
+  if (state === 'sleep') { p.closed = 1; p.head = .12; p.breath = Math.sin(elapsed * 1.5) * .8; p.lean = -2; p.turn = -.2; }
   if (state === 'wake') { p.closed = 1 - ease(t / .65); p.squat = 8 * (1 - ease(t / .8)); p.left = .25; p.right = -.25; }
   if (state === 'happy') {
-    const hop = (t - .18) / .5;
-    p.squat = t < .18 ? Math.sin(t / .18 * Math.PI) * 4 : t < .68 ? 0 : Math.sin(Math.min(1, (t - .68) / .32) * Math.PI) * 3;
-    p.lift = hop > 0 && hop < 1 ? -4 * hop * (1 - hop) * 7 : 0;
+    const jump = jumpAt(t, 7, .18, .5);
+    p.squat = jump.squash * 4; p.lift = jump.lift;
     const flutter = t < .95 ? 1 : Math.max(0, 1 - (t - .95) * 1.6);
     p.left = .65 + Math.sin(t * 19) * .22 * flutter; p.right = -p.left;
-    p.closed = 1; p.smile = 1; p.head = -.06; p.lean = frame.lookX * 2;
+    p.closed = ease(t / .25); p.smile = ease(t / .25); p.head = -.06 + frame.lookX * .06; p.lean = frame.lookX * 3;
+    p.brow = 1.4; p.turn = frame.lookX * .7;
   }
-  if (state === 'sulk') { p.pout = 1; p.head = -.11; p.lean = -3; p.left = -.23; p.right = .23; p.closed = .35; p.squat = 2; }
+  if (state === 'sulk') { p.pout = 1; p.head = -.11; p.lean = -3; p.left = -.23; p.right = .23; p.closed = .35; p.squat = 2; p.brow = -1.5; p.turn = -.8; }
   if (state === 'eat') { p.left = -.85; p.right = .85; p.head = Math.sin(t * 7) * .018; p.closed = .2; p.smile = .35 + Math.sin(t * 9) * .25; }
-  if (state === 'dragged') { p.lift = -12; p.left = .4 + Math.sin(t * 6) * .12; p.right = -.4; p.leftFoot = Math.sin(t * 6) * 2; p.rightFoot = -p.leftFoot; p.head = -.06; }
+  if (state === 'dragged') { p.lift = -12; p.left = .4 + Math.sin(t * 6) * .12; p.right = -.4; p.leftFoot = Math.sin(t * 6) * 2; p.rightFoot = -p.leftFoot; p.head = -.06; p.surprise = .7; p.brow = 2; }
   if (state === 'land') { p.squat = Math.sin(Math.min(1, t / .4) * Math.PI) * 6; p.left = .2; p.right = -.2; }
   if (state === 'stumble') { const trip = Math.sin(Math.min(1, t / .65) * Math.PI); p.tilt = trip * .16; p.head = -trip * .1; p.left = .5; p.right = -.7; p.leftFoot = trip * 4; p.closed = t < .35 ? .7 : 0; }
   if (state === 'stretch') { p.left = .85; p.right = -.85; p.closed = .9; p.breath = -2; }
   if (state === 'groom') { p.left = -1.8; p.right = -.1; p.head = -.09; p.closed = .4; }
+  p.hair = Math.sin(elapsed * 1.7 - .6) * .018 - p.head * .35;
+  p.hood = -p.head * .15 + p.lift * .002;
   return p;
 }
 function face(c: CanvasRenderingContext2D, p: Pose, frame: PetFrame) {
+  c.save(); c.translate(p.turn * 10, 0); c.scale(1 - Math.abs(p.turn) * .12, 1);
   const glance = p.pout ? -1.5 : frame.lookX * 1.4;
   const y = 20.8 + frame.lookY * .6;
   for (const side of [-1, 1]) {
     const x = side * 18.5;
     const close = ease(p.closed);
+    c.save(); c.translate(x, y); c.scale(1 - Math.max(0, -side * p.turn) * .16, 1 + p.surprise * .18); c.translate(-x, -y);
     c.save();
     if (close < .98) {
       // A nearly level upper eyelid and a rounded lower lid give the reference's quiet gaze.
@@ -120,11 +144,16 @@ function face(c: CanvasRenderingContext2D, p: Pose, frame: PetFrame) {
     if (close > .9) { c.moveTo(x - 6.5, y + 2); c.quadraticCurveTo(x, y + (p.smile > .6 ? -3.8 : 5.4), x + 6.5, y + 2); }
     else { c.moveTo(x - 8.4, y - 5 + close * 6.8); c.quadraticCurveTo(x, y - 6.6 + close * 6.8, x + 8, y - 5.3 + close * 6.8); }
     c.stroke();
+    c.strokeStyle = '#58443b'; c.lineWidth = 1.2; c.beginPath();
+    c.moveTo(x - 6, y - 10 - p.brow + side * p.pout * 2);
+    c.quadraticCurveTo(x, y - 12 - p.brow, x + 6, y - 10 - p.brow - side * p.pout * 2); c.stroke();
     oval(c, side * 26, 29.5, p.pout ? 5.5 : 4.5, p.pout ? 2.5 : 1.65, '#eaaea266');
+    c.restore();
   }
   c.save(); c.translate(0, 4);
   c.strokeStyle = '#885950'; c.lineWidth = 1.2; c.lineCap = 'round'; c.beginPath();
-  if (p.yawn > .05) { oval(c, 0, 29, 2 + p.yawn * 2, 1 + p.yawn * 5, '#814b4b'); }
+  if (p.surprise > .3) { oval(c, 0, 29, 2.2, 1.5 + p.surprise * 3, '#814b4b'); }
+  else if (p.yawn > .05) { oval(c, 0, 29, 2 + p.yawn * 2, 1 + p.yawn * 5, '#814b4b'); }
   else if (p.pout) { c.moveTo(-2.5, 28.5); c.quadraticCurveTo(0, 26.5, 2.5, 28.5); c.stroke(); }
   else if (p.smile > .6) {
     c.moveTo(-5, 27); c.quadraticCurveTo(0, 25.5, 5, 27); c.bezierCurveTo(5, 36, -5, 36, -5, 27);
@@ -134,7 +163,32 @@ function face(c: CanvasRenderingContext2D, p: Pose, frame: PetFrame) {
     oval(c, 0, 28.3, 1.9, 1.3 + p.smile, '#94605b');
   }
   c.restore();
+  c.restore();
 }
+
+function drawHead(c: CanvasRenderingContext2D, p: Pose, frame: PetFrame): void {
+  if (!heads || !headBlend) return;
+  // Dedicated angle drawings avoid doubled eyes/beaks from crossfading dissimilar views.
+  const view = Math.abs(p.turn) < .35 ? 0 : p.turn < 0 ? 1 : 2;
+  headBlend.clearRect(0, 0, 232, 180);
+  headBlend.drawImage(heads, view * 724 + 7, 80, 710, 575, 0, 0, 232, 180);
+  // The hair tips swing behind the head, with a delayed response to head movement.
+  for (const side of [-1, 1]) {
+    c.save(); c.translate(side * 45, 6); c.rotate(p.hair);
+    c.beginPath(); c.moveTo(-side * 4, -10);
+    c.bezierCurveTo(side * 3, 3, side * 6, 22, side * 13, 31);
+    c.quadraticCurveTo(-side * 2, 31, -side * 7, 15); c.closePath();
+    c.fillStyle = '#282832'; c.fill(); c.strokeStyle = '#13151c'; c.lineWidth = 1.2; c.stroke(); c.restore();
+  }
+  // Draw broad overlapping regions to keep the outline smooth at every DPI.
+  c.save(); c.beginPath(); c.rect(-80, -60, 160, 61); c.clip();
+  c.translate(0, -20); c.rotate(p.hood); c.translate(0, 20);
+  c.drawImage(headBlend.canvas, -58, -43, 116, 90); c.restore();
+  c.save(); c.beginPath(); c.rect(-80, 0, 160, 55); c.clip();
+  c.drawImage(headBlend.canvas, -58, -43, 116, 90); c.restore();
+  face(c, { ...p, turn: view === 0 ? 0 : view === 1 ? -1 : 1 }, frame);
+}
+
 function figure(c: CanvasRenderingContext2D, p: Pose, frame: PetFrame) {
   c.save(); c.translate(128, 206 + p.lift);
   part(c, 'leftFoot', -33 + p.leftX, -13 - p.leftFoot, 26, 13);
@@ -148,7 +202,7 @@ function figure(c: CanvasRenderingContext2D, p: Pose, frame: PetFrame) {
   if (frame.state !== 'eat' && frame.state !== 'groom') { wing(true); wing(false); }
   part(c, 'body', -59, top, 118, 84 - p.squat - p.breath);
   c.save(); c.translate(0, -110 + p.squat + p.breath * .45); c.rotate(p.head);
-  part(c, 'head', -58, -43, 116, 90); face(c, p, frame); c.restore();
+  drawHead(c, p, frame); c.restore();
   if (frame.state === 'eat') {
     oval(c, 0, -36, 10, 9, '#f3cf8c'); oval(c, -3, -38, 1.5, 1.5, '#b98859'); oval(c, 4, -33, 1.2, 1.2, '#b98859');
   }
@@ -185,18 +239,36 @@ export class GugugagaRenderer {
   private current: Pose | null = null;
   private from: Pose | null = null;
   private disposed = false;
+  private lookX = 0;
+  private lookY = 0;
+  private angle = 0;
+  private turnBlink = 0;
   constructor(canvas: HTMLCanvasElement) {
     canvas.width = this.layer.width = 512; canvas.height = this.layer.height = 448;
     this.c = this.layer.getContext('2d', { willReadFrequently: true })!; this.visible = canvas.getContext('2d')!;
   }
   draw(frame: PetFrame): void {
     if (this.disposed || !atlas) return;
-    const changed = this.previous?.state !== frame.state;
+    const changed = this.previous?.state !== frame.state || frame.time < (this.previous?.time ?? 0);
     const dt = changed ? 0 : Math.max(0, Math.min(.25, frame.time - (this.previous?.time ?? frame.time)));
     this.elapsed += dt;
+    this.lookX = this.previous ? follow(this.lookX, frame.lookX, dt, 9) : frame.lookX;
+    this.lookY = this.previous ? follow(this.lookY, frame.lookY, dt, 9) : frame.lookY;
+    frame = { ...frame, lookX: this.lookX, lookY: this.lookY };
     if (frame.state === 'walk' || frame.state === 'play') this.phase += Math.max(0, frame.speed) * dt * Math.PI / (2 * STRIDE);
     if (changed) { this.from = this.current; this.transitionStart = frame.time; }
-    const target = pose(frame, this.phase, this.elapsed), amount = ease((frame.time - this.transitionStart) / .2);
+    const target = pose(frame, this.phase, this.elapsed);
+    if (this.current && dt > 0) {
+      target.hair = follow(this.current.hair, target.hair, dt, 5);
+      target.hood = follow(this.current.hood, target.hood, dt, 8);
+      target.turn = follow(this.current.turn, target.turn, dt, 7);
+    }
+    const angle = Math.abs(target.turn) < .35 ? 0 : Math.sign(target.turn);
+    if (angle !== this.angle && this.previous) this.turnBlink = .16;
+    this.angle = angle;
+    this.turnBlink = Math.max(0, this.turnBlink - dt);
+    if (this.turnBlink > 0) target.closed = Math.max(target.closed, ease(this.turnBlink / .16));
+    const amount = ease((frame.time - this.transitionStart) / (frame.state === 'sleep' ? .5 : .24));
     const current = { ...target };
     if (this.from && amount < 1) for (const key of Object.keys(target) as (keyof Pose)[]) current[key] = this.from[key] + (target[key] - this.from[key]) * amount;
     this.current = current; this.previous = { ...frame }; this.pixels = null;

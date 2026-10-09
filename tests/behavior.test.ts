@@ -144,7 +144,7 @@ describe('cat behavior', () => {
   it('quiets an active mouse follow and does not resume the old chase after focus', () => {
     const cat = new CatBehavior(() => 0.4);
     const normal = context({ settings: { ...DEFAULT_SETTINGS, personality: 'energetic' } });
-    advance(cat, 2.3, normal);
+    advance(cat, 2.7, normal);
     expect(cat.step(0, normal)).toMatchObject({ state: 'walk', velocity: 52 });
     const focused = { ...normal, settings: { ...normal.settings, focusMode: true } };
     expect(cat.step(0, focused)).toMatchObject({ state: 'sit', velocity: 0 });
@@ -182,8 +182,8 @@ describe('cat behavior', () => {
     const desktop = { ...context().desktop, cursor: { x: 550, y: 750 } };
     const calmContext = context({ settings: { ...DEFAULT_SETTINGS, personality: 'calm' }, needs, desktop });
     const affectionateContext = context({ settings: { ...DEFAULT_SETTINGS, personality: 'affectionate' }, needs, desktop });
-    advance(calm, 2.3, calmContext);
-    advance(affectionate, 2.3, affectionateContext);
+    advance(calm, 2.7, calmContext);
+    advance(affectionate, 2.7, affectionateContext);
     expect(calm.step(0, calmContext).state).toBe('walk');
     expect(calm.step(0, calmContext).velocity).toBeGreaterThan(0);
     expect(affectionate.step(0, affectionateContext).velocity).toBeLessThan(0);
@@ -197,7 +197,7 @@ describe('cat behavior', () => {
       needs: { fullness: 100, energy: 100, affection: 0 },
       desktop: { ...context().desktop, cursor: { x: 550, y: 40 } },
     });
-    advance(cat, 2.3, ctx);
+    advance(cat, 2.7, ctx);
     expect(cat.step(0, ctx)).toMatchObject({ state: 'walk' });
     expect(cat.step(0, ctx).velocity).toBeGreaterThan(0);
   });
@@ -247,7 +247,7 @@ describe('cat behavior', () => {
   it('slows at the screen edge and reports actual movement speed', () => {
     const cat = new CatBehavior(() => 0.4);
     const ctx = context({ settings: { ...DEFAULT_SETTINGS, personality: 'energetic', followMouse: false } });
-    advance(cat, 2.3, ctx);
+    advance(cat, 2.7, ctx);
     const middle = cat.step(0, ctx);
     expect(middle.state).toBe('walk');
     expect(middle.speed).toBe(Math.abs(middle.velocity));

@@ -56,6 +56,9 @@ export interface CatFrame {
   speed: number;
   lookX: number;
   lookY: number;
+  /** Per-action cadence; renderers use 1 for standalone previews. */
+  motionRate?: number;
+  variation?: number;
 }
 export interface PetFrame extends Omit<CatFrame, 'state'> { state: PetState; speech?: string }
 export interface BehaviorContext {

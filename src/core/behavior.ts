@@ -35,6 +35,11 @@ export class CatBehavior {
   private followUntil = 0;
   private nextFollow = 0;
   private wasFocusMode = false;
+  private episode = 0;
+  private nextAttention = 8;
+  private attentionTime = 0;
+  private afterObserve: PetState | null = null;
+  private petLook: { x: number; y: number } | null = null;
 
   private pokeTimes: number[] = [];
   private nextSulk = 0;
@@ -49,17 +54,20 @@ export class CatBehavior {
     this.pokeTimes.push(this.elapsed);
     if (this.pokeTimes.length >= 3 && this.elapsed >= this.nextSulk) {
       this.pending = null; this.pendingFromSleep = false; this.requestedState = 'sulk';
+      this.afterObserve = null;
       this.nextSulk = this.elapsed + 8; this.pokeTimes = []; this.speechUntil = 0;
       this.enter('sulk', true);
     }
   }
 
   /** Platform-approved actions have already passed the real-time rate limit. */
-  interact(action: PetAction, acceptedByPlatform = false): void {
+  interact(action: PetAction, acceptedByPlatform = false, touch?: { x: number; y: number }): void {
     if (this.dragged || (this.character === 'gugugaga' && this.state === 'sulk' && this.stateTime < 1.5)) return;
     if (!acceptedByPlatform && this.elapsed < this.nextAllowed[action]) return;
     this.nextAllowed[action] = this.elapsed + COOLDOWN[action];
     this.pending = action;
+    this.afterObserve = null;
+    this.petLook = action === 'pet' && touch ? { x: Math.max(-1, Math.min(1, finite(touch.x))), y: Math.max(-1, Math.min(1, finite(touch.y))) } : null;
     if (this.state === 'sleep') {
       this.pendingFromSleep = true;
       this.enter(this.character === 'gugugaga' ? 'wake' : 'stretch');
@@ -76,6 +84,8 @@ export class CatBehavior {
       this.pending = null;
       this.pendingFromSleep = false;
       this.requestedState = null;
+      this.afterObserve = null;
+      this.attentionTime = 0;
     }
     this.speechUntil = 0;
     this.enter(dragged ? 'dragged' : this.character === 'gugugaga' ? 'land' : 'idle');
@@ -91,12 +101,15 @@ export class CatBehavior {
     this.stateTime += dt;
     const enteredFocus = context.settings.focusMode && !this.wasFocusMode;
     this.wasFocusMode = context.settings.focusMode;
+    if (!context.settings.followMouse || context.needs.energy < 35) this.afterObserve = null;
 
     if (context.settings.focusMode) {
       if (this.pending) this.nextAllowed[this.pending] = this.elapsed;
       this.pending = null;
       this.requestedState = null;
       this.followUntil = 0;
+      this.afterObserve = null;
+      this.attentionTime = 0;
     }
 
     if (this.dragged || context.desktop.dragging) {
@@ -105,6 +118,8 @@ export class CatBehavior {
         this.pending = null;
         this.pendingFromSleep = false;
         this.requestedState = null;
+        this.afterObserve = null;
+        this.attentionTime = 0;
         this.enter('dragged');
       }
       return this.output(context, 0);
@@ -138,6 +153,7 @@ export class CatBehavior {
       this.chooseNext(context);
     }
 
+    this.noticeCursor(dt, context);
     return this.output(context, this.walkVelocity(context));
   }
 
@@ -148,8 +164,10 @@ export class CatBehavior {
 
   private enter(state: PetState, restart = false): void {
     if (this.state === state && !restart) return;
+    if (this.state === 'happy' && state !== 'happy') this.petLook = null;
     this.state = state;
     this.stateTime = 0;
+    this.episode++;
     const cooldown = AUTONOMOUS_COOLDOWN[state];
     if (cooldown) this.nextAutonomous[state] = this.elapsed + cooldown;
     if (state === 'stumble') this.nextAutonomous.stumble = this.elapsed + 90;
@@ -183,6 +201,12 @@ export class CatBehavior {
     }
     if (this.state === 'sniff') {
       this.enter('groom');
+      return;
+    }
+    if (this.state === 'observe' && this.afterObserve) {
+      const next = this.afterObserve;
+      this.afterObserve = null;
+      this.enter(next);
       return;
     }
     if (['stretch', 'wake', 'land', 'sulk', 'stumble', 'observe', 'wave', 'hop'].includes(this.state)) {
@@ -259,6 +283,27 @@ export class CatBehavior {
     }
   }
 
+  private noticeCursor(dt: number, context: BehaviorContext): void {
+    const { desktop, settings } = context;
+    const dx = physicalToLogical(desktop.cursor.x - desktop.x - desktop.width / 2, desktop.scale);
+    const dy = physicalToLogical(desktop.cursor.y - desktop.y - desktop.height / 2, desktop.scale);
+    const area = desktop.workArea;
+    const nearby = desktop.cursor.x >= area.x && desktop.cursor.x < area.x + area.width &&
+      desktop.cursor.y >= area.y && desktop.cursor.y < area.y + area.height && Math.hypot(dx, dy) < 145;
+    if (!settings.followMouse || !nearby || this.elapsed < this.nextAttention ||
+        !['idle', 'sit'].includes(this.state) || context.needs.energy < 35) {
+      this.attentionTime = 0;
+      return;
+    }
+    this.attentionTime += dt;
+    if (this.attentionTime < .7) return;
+    this.attentionTime = 0;
+    this.nextAttention = this.elapsed + (settings.personality === 'affectionate' ? 20 : 30);
+    if (this.character === 'cat') this.direction = dx < 0 ? -1 : 1;
+    this.afterObserve = this.character === 'cat' ? 'play' : 'wave';
+    this.enter('observe');
+  }
+
   private canApproach(context: BehaviorContext): boolean {
     const { desktop, settings } = context;
     const center = desktop.x + desktop.width / 2;
@@ -291,7 +336,11 @@ export class CatBehavior {
       return 0;
     }
     const slowdown = Math.min(1, edgeLogical / 65);
-    const speed = Math.min(MAX_SPEED * 2, MAX_SPEED * Math.max(0, finite(context.settings.speed, 1))) * slowdown;
+    // Look and shift weight before the first step; no window movement during anticipation.
+    const onset = Math.max(0, Math.min(1, (this.stateTime - (chasing ? .35 : .18)) / .28));
+    const acceleration = onset * onset * (3 - 2 * onset);
+    const speed = Math.min(MAX_SPEED * 2, MAX_SPEED * Math.max(0, finite(context.settings.speed, 1))) * slowdown * acceleration;
+    if (speed === 0) return 0;
     return this.direction * speed * (chasing ? .55 : this.character === 'gugugaga' ? .72 : 1);
   }
 
@@ -301,13 +350,16 @@ export class CatBehavior {
     const centerY = desktop.y + desktop.height / 2;
     const distanceX = physicalToLogical(desktop.cursor.x - centerX, desktop.scale);
     const distanceY = physicalToLogical(desktop.cursor.y - centerY, desktop.scale);
-    const lookX = this.state === 'observe' ? Math.sin(this.stateTime * 2.1) * .85 : context.settings.followMouse && !context.settings.focusMode
+    const touching = this.state === 'happy' && this.petLook && !context.settings.focusMode ? this.petLook : null;
+    const lookX = touching ? touching.x : this.state === 'observe' && !this.afterObserve ? Math.sin(this.stateTime * 2.1) * .85 : context.settings.followMouse && !context.settings.focusMode
       ? Math.max(-1, Math.min(1, distanceX / 180)) : 0;
-    const lookY = this.state === 'observe' ? -Math.sin(this.stateTime * 1.05) * .4 : context.settings.followMouse && !context.settings.focusMode
+    const lookY = touching ? touching.y : this.state === 'observe' && !this.afterObserve ? -Math.sin(this.stateTime * 1.05) * .4 : context.settings.followMouse && !context.settings.focusMode
       ? Math.max(-1, Math.min(1, distanceY / 140)) : 0;
     return {
       state: this.state, time: this.stateTime, direction: this.direction,
       speed: Math.abs(velocity), velocity, lookX, lookY,
+      variation: (Math.sin(this.episode * 2.399963) + 1) / 2,
+      motionRate: .94 + (Math.sin(this.episode * 2.399963) + 1) * .06,
       speech: this.character === 'gugugaga' && this.elapsed < this.speechUntil && !context.settings.focusMode ? 'ぐぐがが〜' : undefined,
     };
   }

@@ -1,5 +1,5 @@
 import { CAT_BASELINE, CAT_HEIGHT, CAT_WIDTH, type CatFrame, type CatState, type HitMask } from '../core/types';
-import { blinkAt, footstep } from './motion';
+import { blinkAt, footstep, follow, jumpAt } from './motion';
 import { drawGround, drawHearts } from './accents';
 
 const SCALE = 2;
@@ -18,7 +18,7 @@ interface Pose {
   rearX: number; rearY: number; frontX: number; frontY: number;
   farRearX: number; farRearY: number; farFrontX: number; farFrontY: number;
   eyeClose: number; smile: number; ears: number; pawUp: number;
-  curl: number; blush: number; yawn: number;
+  curl: number; blush: number; yawn: number; shoulder: number; hip: number; earNear: number;
 }
 
 function mix(a: number, b: number, t: number): number { return a + (b - a) * t; }
@@ -31,7 +31,10 @@ function interpolate(a: Pose, b: Pose, t: number): Pose {
   return result;
 }
 
-function poseFor(state: CatState, time: number, speed: number, walkPhase: number, elapsed: number): Pose {
+function poseFor(frame: CatFrame, speed: number, walkPhase: number, elapsed: number): Pose {
+  const { state } = frame;
+  const time = frame.time * (frame.motionRate ?? 1);
+  const look = frame.lookX * frame.direction;
   const breath = Math.sin(elapsed * 2.1);
   const blink = blinkAt(elapsed);
   const pose: Pose = {
@@ -41,7 +44,8 @@ function poseFor(state: CatState, time: number, speed: number, walkPhase: number
     rearX: 92, rearY: 198, frontX: 146, frontY: 199,
     farRearX: 110, farRearY: 197, farFrontX: 163, farFrontY: 197,
     eyeClose: blink, smile: .12, ears: Math.max(0, Math.sin(elapsed * .8)) ** 24 * .3, pawUp: 0,
-    curl: 0, blush: .24, yawn: 0,
+    curl: 0, blush: .24, yawn: 0, shoulder: 0, hip: 0,
+    earNear: Math.max(0, Math.sin(elapsed * .63 + 1.5)) ** 28 * .55,
   };
 
   switch (state) {
@@ -70,12 +74,11 @@ function poseFor(state: CatState, time: number, speed: number, walkPhase: number
       pose.tail = 8 + Math.sin(time * 4) * 6; pose.blush = .5;
       break;
     case 'hop': {
-      const flight = clamp((time - .3) / .7);
-      const lift = Math.sin(flight * Math.PI);
-      const crouch = time < .3 ? Math.sin(time / .3 * Math.PI) : Math.sin(clamp((time - 1) / .6) * Math.PI);
-      pose.lift = -lift * 24; pose.by += crouch * 5; pose.bh -= crouch * 5;
-      pose.hy += crouch * 3; pose.frontY -= lift * 7; pose.farFrontY -= lift * 7;
-      pose.tail = 12 + lift * 9; pose.smile = .9;
+      const jump = jumpAt(time, 24);
+      pose.lift = jump.lift; pose.by += jump.squash * 5; pose.bh -= jump.squash * 5;
+      pose.bw += jump.squash * 2; pose.hy += jump.squash * 3;
+      pose.frontY += jump.lift * .28; pose.farFrontY += jump.lift * .28;
+      pose.tail = 12 - jump.lift * .4; pose.smile = .9;
       break;
     }
     case 'walk': {
@@ -88,6 +91,16 @@ function poseFor(state: CatState, time: number, speed: number, walkPhase: number
       pose.farRearX = 107 + near.x * motion; pose.farRearY = 197 - near.lift * motion;
       pose.farFrontX = 164 + far.x * motion; pose.farFrontY = 197 - far.lift * motion;
       pose.tail = 4 + Math.sin(walkPhase * .5) * 4;
+      pose.shoulder = Math.sin(walkPhase) * 2 * motion;
+      pose.hip = -Math.sin(walkPhase) * 1.5 * motion;
+      const prepare = Math.sin(clamp(frame.time / .45) * Math.PI);
+      pose.shoulder += prepare * 1.8; pose.hip -= prepare;
+      pose.bx += Math.sin(walkPhase) * .9 * motion;
+      pose.tilt = Math.sin(walkPhase) * .025 * motion;
+      pose.headTilt = -pose.tilt * .65;
+      pose.hx += look * 3;
+      pose.hy += pose.shoulder * .4;
+      pose.tail += Math.sin(walkPhase - .8) * 5;
       break;
     }
     case 'sit':
@@ -124,13 +137,17 @@ function poseFor(state: CatState, time: number, speed: number, walkPhase: number
       pose.farFrontX = 156; pose.farFrontY = 199;
       pose.eyeClose = 1; pose.pawUp = 1; pose.tail = -4; pose.smile = .75;
       break;
-    case 'happy':
-      pose.hx = 149 + Math.sin(Math.min(1, time / 1.8) * Math.PI) * 3;
-      pose.hy = 132; pose.headTilt = -.06 + Math.sin(time * 3) * .025;
+    case 'happy': {
+      const nuzzle = Math.sin(clamp(time / 1.8) * Math.PI);
+      pose.hx = 147 + look * nuzzle * 10;
+      pose.hy = 132 + frame.lookY * nuzzle * 5;
+      pose.headTilt = -.06 + look * nuzzle * .14;
+      pose.shoulder = -nuzzle * 2; pose.bx += look * nuzzle * 2;
       pose.tail = 7 + Math.sin(time * 4) * 5;
       pose.eyeClose = 1; pose.smile = 1; pose.blush = .65;
       pose.ears = -.18;
       break;
+    }
     case 'eat':
       pose.bx = 111; pose.by = 170; pose.hx = 159;
       pose.hy = 159 + Math.sin(time * 8) * 3; pose.headTilt = .1;
@@ -138,12 +155,15 @@ function poseFor(state: CatState, time: number, speed: number, walkPhase: number
       pose.eyeClose = .9; pose.smile = .8; pose.tail = -5;
       break;
     case 'play': {
-      const hop = Math.abs(Math.sin(time * 5.5));
-      pose.lift = -4 - hop * 17; pose.tilt = -.08 + Math.sin(time * 5.5) * .08;
-      pose.hx = 159; pose.hy = 127; pose.headTilt = -.12;
-      pose.frontX = 177; pose.frontY = 177; pose.farFrontX = 167; pose.farFrontY = 180;
-      pose.rearX = 84; pose.rearY = 195; pose.farRearX = 99; pose.farRearY = 193;
-      pose.tail = 25 + Math.sin(time * 8) * 8; pose.smile = 1;
+      const jump = jumpAt(time, 17, .45, .55);
+      const reach = smooth((time - .35) / .3) * (1 - smooth((time - 1.6) / .5));
+      pose.lift = jump.lift; pose.by += jump.squash * 6; pose.bh -= jump.squash * 6;
+      pose.hx = 150 + reach * 9; pose.hy = 137 + jump.squash * 6 - reach * 10;
+      pose.headTilt = -.12 * reach;
+      pose.frontX = 146 + reach * 31; pose.frontY = 199 - reach * 22;
+      pose.farFrontX = 163 + reach * 4; pose.farFrontY = 197 - reach * 17;
+      pose.hip = time < .45 ? Math.sin(time * 22) * 1.5 : 0;
+      pose.tail = 18 + Math.sin(time * 8) * 6; pose.smile = .8;
       break;
     }
     case 'dragged':
@@ -154,6 +174,10 @@ function poseFor(state: CatState, time: number, speed: number, walkPhase: number
       pose.frontX = 151; pose.frontY = 210; pose.farFrontX = 167; pose.farFrontY = 212;
       pose.eyeClose = blink * .5; pose.ears = .25; pose.tail = -20; pose.smile = 0;
       break;
+  }
+  if (state === 'idle' || state === 'sit') {
+    pose.hx += look * 3.5; pose.hy += frame.lookY * 1.5;
+    pose.headTilt += look * .045;
   }
   return pose;
 }
@@ -174,11 +198,14 @@ function gradient(ctx: CanvasRenderingContext2D, x: number, y: number, radius: n
 
 function limb(ctx: CanvasRenderingContext2D, sx: number, sy: number, ex: number, ey: number, far = false): void {
   const width = far ? 7 : 9;
+  const raised = ey < sy;
+  const elbowX = mix(sx, ex, .42) - (raised ? 9 : 1);
+  const elbowY = raised ? sy + 13 : mix(sy, ey, .6);
   // One continuous paw/leg contour, with an open shoulder seam under the fur.
   ctx.beginPath(); ctx.moveTo(sx - width, sy - 5);
-  ctx.bezierCurveTo(sx - width - 2, sy + 8, ex - width - 3, ey - 11, ex - width - 2, ey - 2);
+  ctx.bezierCurveTo(elbowX - width, elbowY, ex - width - 3, ey - 11, ex - width - 2, ey - 2);
   ctx.bezierCurveTo(ex - width - 3, ey + 8, ex + width + 5, ey + 9, ex + width + 3, ey - 1);
-  ctx.bezierCurveTo(ex + width + 2, ey - 8, sx + width + 3, sy + 9, sx + width, sy - 5);
+  ctx.bezierCurveTo(ex + width + 2, ey - 8, elbowX + width, elbowY, sx + width, sy - 5);
   ctx.fillStyle = far ? '#ead0ae' : gradient(ctx, ex, ey - 5, 24); ctx.fill();
   ctx.strokeStyle = INK; ctx.lineWidth = far ? 1.8 : 2.2; ctx.lineCap = 'round'; ctx.stroke();
   ctx.strokeStyle = '#c4a084'; ctx.lineWidth = .9;
@@ -247,7 +274,7 @@ function headShape(ctx: CanvasRenderingContext2D): void {
 
 function head(ctx: CanvasRenderingContext2D, p: Pose, lookX: number, lookY: number): void {
   ctx.save(); ctx.translate(p.hx, p.hy); ctx.rotate(p.headTilt);
-  ear(ctx, -28, -1, p.ears); ear(ctx, 28, 1, p.ears * .65);
+  ear(ctx, -28, -1, p.ears); ear(ctx, 28, 1, p.ears * .65 + p.earNear);
   headShape(ctx);
   fillStroke(ctx, gradient(ctx, 0, -2, 49), INK, 2.4);
 
@@ -321,13 +348,13 @@ function drawCat(ctx: CanvasRenderingContext2D, p: Pose, frame: CatFrame): void 
   if (frame.direction === -1) { ctx.translate(CAT_WIDTH, 0); ctx.scale(-1, 1); }
   ctx.translate(0, p.lift);
   tail(ctx, p);
-  limb(ctx, p.bx - p.bw * .49, p.by + 9, p.farRearX, p.farRearY, true);
-  limb(ctx, p.bx + p.bw * .48, p.by + 11, p.farFrontX, p.farFrontY, true);
+  limb(ctx, p.bx - p.bw * .49, p.by + 9 + p.hip, p.farRearX, p.farRearY, true);
+  limb(ctx, p.bx + p.bw * .48, p.by + 11 + p.shoulder, p.farFrontX, p.farFrontY, true);
   body(ctx, p);
-  limb(ctx, p.bx - p.bw * .53, p.by + p.bh * .36, p.rearX, p.rearY);
+  limb(ctx, p.bx - p.bw * .53, p.by + p.bh * .36 + p.hip, p.rearX, p.rearY);
   limb(ctx,
     mix(p.bx + p.bw * .56, p.bx - 17, p.curl),
-    mix(p.by + p.bh * .22, p.by + 9, p.curl),
+    mix(p.by + p.bh * .22 + p.shoulder, p.by + 9, p.curl),
     p.frontX, p.frontY,
   );
   head(ctx, p, frame.direction * frame.lookX, frame.lookY);
@@ -396,6 +423,8 @@ export class CatRenderer {
   private hasDrawn = false;
   private maskDirty = false;
   private disposed = false;
+  private lookX = 0;
+  private lookY = 0;
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -414,9 +443,14 @@ export class CatRenderer {
   draw(frame: CatFrame): void {
     if (this.disposed) return;
     const speed = Number.isFinite(frame.speed) ? Math.max(0, frame.speed) : 0;
-    if (this.state === frame.state && this.lastFrameTime !== null) this.elapsed += Math.min(.25, Math.max(0, frame.time - this.lastFrameTime));
+    const restarted = this.state !== frame.state || (this.lastFrameTime !== null && frame.time < this.lastFrameTime);
+    const dt = restarted || this.lastFrameTime === null ? 0 : Math.min(.25, Math.max(0, frame.time - this.lastFrameTime));
+    this.elapsed += dt;
+    this.lookX = this.hasDrawn ? follow(this.lookX, frame.lookX, dt, 9) : frame.lookX;
+    this.lookY = this.hasDrawn ? follow(this.lookY, frame.lookY, dt, 9) : frame.lookY;
+    frame = { ...frame, lookX: this.lookX, lookY: this.lookY };
     this.lastFrameTime = frame.time;
-    if (frame.state !== this.state) {
+    if (restarted) {
       this.transitionFrom = this.lastPose;
       this.transitionStart = frame.time;
       this.state = frame.state;
@@ -429,8 +463,10 @@ export class CatRenderer {
       this.walkPhase = (this.walkPhase + speed * dt * Math.PI / (2 * WALK_STRIDE)) % (Math.PI * 2);
       this.previousWalkTime = time;
     }
-    const target = poseFor(frame.state, frame.time, speed, this.walkPhase, this.elapsed);
-    const progress = smooth((frame.time - this.transitionStart) / .22);
+    const target = poseFor(frame, speed, this.walkPhase, this.elapsed);
+    if (this.lastPose && dt > 0) target.tail = follow(this.lastPose.tail, target.tail, dt, 7);
+    const duration = frame.state === 'dragged' ? .12 : frame.state === 'sleep' ? .5 : .24;
+    const progress = smooth((frame.time - this.transitionStart) / duration);
     const pose = this.transitionFrom ? interpolate(this.transitionFrom, target, progress) : target;
     if (progress >= 1) this.transitionFrom = null;
     this.lastPose = pose;

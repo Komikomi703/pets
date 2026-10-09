@@ -115,7 +115,11 @@ async function boot(container: HTMLElement) {
   subscriptions.push(await platform.subscribeAction(event => {
     if (event.character !== character) return;
     if (event.action === 'poke') { behavior.poke(); return; }
-    behavior.interact(event.action, true);
+    const touch = desktop ? {
+      x: (desktop.cursor.x - desktop.x - desktop.width / 2) / (desktop.width / 2),
+      y: (desktop.cursor.y - desktop.y - desktop.height / 2) / (desktop.height / 2),
+    } : undefined;
+    behavior.interact(event.action, true, touch);
     if (snapshot?.data.settings.sound) void sound.play(event.action, character, snapshot.data.settings.volume).catch(() => {});
   }));
   desktop = await platform.desktop(); update(await platform.snapshot());

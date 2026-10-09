@@ -1,6 +1,6 @@
 [package]
 name = "madoneko"
-version = "1.1.0"
+version = "1.2.0"
 description = "まどねこ — デスクトップの小さな同居人"
 authors = ["MadoNeko contributors"]
 edition = "2021"

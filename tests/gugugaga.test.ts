@@ -90,7 +90,8 @@ describe('Gugugaga interaction priorities', () => {
   });
   it('stops a play chase at a display edge and quiets reactions in focus mode', () => {
     const pet = new CatBehavior(() => 0, 'gugugaga'), ctx = context();
-    pet.interact('play', true); expect(pet.step(0, ctx).velocity).toBeGreaterThan(0);
+    pet.interact('play', true); expect(pet.step(0, ctx).velocity).toBe(0);
+    expect(advance(pet, .7, ctx).velocity).toBeGreaterThan(0);
     ctx.desktop.x = 1920 - 224; expect(pet.step(.1, ctx).velocity).toBe(0);
     ctx.settings.focusMode = true; pet.interact('pet', true); expect(pet.step(.1, ctx)).toMatchObject({ state: 'sit', velocity: 0, speech: undefined });
   });

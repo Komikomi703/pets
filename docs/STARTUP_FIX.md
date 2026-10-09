@@ -21,3 +21,27 @@
 - Windowsの旧プロセスをトレイ経由で保存終了し、Tauri CLIでWebフロントを同梱したexeを再ビルドして起動した。単なるWebViewリロードではない。
 
 確認結果と実行ログは [VALIDATION.md](VALIDATION.md)。
+
+## 再発の調査と起動先の修正（2026-10-08）
+
+Windowsで実際に動作していたexeとタスクバーの `MadoNeko.lnk` は、ともに `Temp\MadoNeko-run-*\madoneko.exe` を指していた。旧exeは10月7日0:43作成、SHA-256は `04ce35081a582571c7446ad503aea3e1b8d8f9823437c8996cba63669994825f`。前回修正済みの配布用exeとも別物だった。調査時、自動起動登録はなく、ユーザー設定も自動起動オフだった。
+
+旧exeを通常起動・`--autostart`付き起動で各1回実行し、両方で `state not managed for field state on command get_desktop` の表示と描画停止を再現した。同じプロセスで2秒後の `get_desktop` 呼び出しは成功し、旧版の起動直後のState登録競合と判断できる。`get_desktop_pos` は旧exeには存在しなかった。
+
+現在のソースでは `State<'_, Shared>` と `manage::<Shared>` は同じ型で、初期値を作成・登録してから両WebViewを生成している。`get_snapshot`、`update_settings`、`pet_action`、`sync_frame`、`begin_press`、`end_press`、`open_pet_menu`、`set_visible`、`rescue` も同じSharedを使用する。フロントエンドの `NativePlatform.desktop()` は `get_desktop_pos` を引数なしで呼び、StateはTauriが注入する。ここには追加のState登録やinvoke修正は不要だった。
+
+再発の原因は、従来の `restart-windows.ps1` が毎回別のTempフォルダーへexeをコピーし、タスクバーなどに残った旧版の起動先を更新しなかったこと。修正後は `%LOCALAPPDATA%\Programs\MadoNeko\madoneko.exe` を固定の配置先とし、コピーのハッシュを照合する。既存ショートカットと、存在する場合だけユーザーの自動起動コマンドを更新する。自動起動の有効・無効を変える処理は追加していない。変更前のexe・ショートカット・登録値は `rollback-*` に保存する。
+
+`scripts/validate-startup.ps1` を追加し、検証専用保存領域で通常起動・自動起動引数付き起動を各3回確認する。各回でエラー表示、描画、`get_snapshot`、`get_desktop`、`get_desktop_pos`、有効な画面サイズを検証し、保存終了する。OSの再起動そのものは行わない。
+
+参考：[Tauri 2のState管理と型の一致](https://v2.tauri.app/develop/state-management/)。ローカルのTauri 2.12.1 `src/app.rs` でも、`create: true` のWebView生成がユーザーsetupより先に実行されることを確認した。
+
+### 修正後の結果
+
+- `pnpm check`：型チェック、ESLint、単体51件、フロントエンドビルド成功。
+- Tauri CLI + cargo-xwin：Windows release exeのビルド成功。MSVC CRTのデバッグ用PDB欠落によるLNK4099警告あり、リンクは成功。
+- Windows上のRustテスト12件成功（WebViewのState登録順序の回帰テストを含む）。
+- 通常起動3回・`--autostart`付き3回：エラー表示なし、描画・両位置取得API成功。ログは `artifacts/native/startup-fixed-current.json`。
+- Windows操作テスト：猫39件、ググガガ43件すべて成功。ログは `artifacts/native/startup-fix-cat/` と `startup-fix-gugugaga/`。
+- 修正したタスクバー用 `.lnk` からユーザーの通常データで実際に起動し、固定パスのプロセス、エラー表示なし、`get_desktop` / `get_desktop_pos` 成功を確認。ログは `artifacts/native/pinned-startup-fixed.json`。最後はデバッグポートを開かず、同じショートカットから起動した。
+- 新exeのSHA-256：`b22301209e6c8096ec2d5dac64999e26c3db571c0e90ea4dfc5db87bc11f43a8`。PC自体の再起動は実施していない。

@@ -512,3 +512,31 @@ test('breathing and walking keep a planted paw on the same ground line in both d
     expect(row.maximum, JSON.stringify(row)).toBeLessThanOrEqual(52);
   }
 });
+
+test('character turns, repeated reactions and pose transitions retain unclipped hit silhouettes', async ({ page }) => {
+  await page.goto('/?view=gallery');
+  const failures = await page.evaluate(async () => {
+    const url = '/src/render/characters.ts';
+    const { createRenderer, prepareCharacters } = await import(/* @vite-ignore */ url) as typeof import('../src/render/characters');
+    await prepareCharacters();
+    const failures: string[] = [];
+    for (const character of ['cat', 'gugugaga'] as const) {
+      const canvas = document.createElement('canvas'), renderer = createRenderer(canvas, character);
+      for (const direction of [-1, 1] as const) {
+        for (const state of ['idle', 'walk', 'happy', 'happy', 'observe', 'wave', 'hop', 'sleep', 'stretch', 'dragged', 'idle'] as const) {
+          for (const time of [0, .1, .25, .6, 1.2]) {
+            renderer.draw({ state, time, direction, speed: state === 'walk' ? 42 : 0, lookX: direction, lookY: -.6 });
+            const mask = renderer.hitMask();
+            const border = mask.cells.some((value, index) => value > 0 &&
+              (index < mask.width || index >= mask.width * (mask.height - 1) || index % mask.width === 0 || index % mask.width === mask.width - 1));
+            if (border || mask.cells.reduce((sum, value) => sum + value, 0) < 100 || renderer.hitTest(2, 2))
+              failures.push(`${character}/${direction}/${state}/${time}`);
+          }
+        }
+      }
+      renderer.dispose();
+    }
+    return failures;
+  });
+  expect(failures).toEqual([]);
+});
