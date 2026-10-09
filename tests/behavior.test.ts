@@ -164,8 +164,8 @@ describe('cat behavior', () => {
 
   it('makes an affectionate cat approach more often when affection is low', () => {
     const needs = { fullness: 100, energy: 100, affection: 0 };
-    const calm = new CatBehavior(() => 0.4);
-    const affectionate = new CatBehavior(() => 0.4);
+    const calm = new CatBehavior(() => 0.32);
+    const affectionate = new CatBehavior(() => 0.32);
     const calmContext = context({ settings: { ...DEFAULT_SETTINGS, personality: 'calm' }, needs });
     const affectionateContext = context({ settings: { ...DEFAULT_SETTINGS, personality: 'affectionate' }, needs });
     advance(calm, 2.3, calmContext);
@@ -176,8 +176,8 @@ describe('cat behavior', () => {
 
   it('favors a nearby cursor for an affectionate walk while a calm walk wanders', () => {
     const randomFrom = (draws: number[]) => () => draws.shift() ?? 0.9;
-    const calm = new CatBehavior(randomFrom([0.46, 0.6, 0.9]));
-    const affectionate = new CatBehavior(randomFrom([0.4, 0.6]));
+    const calm = new CatBehavior(randomFrom([0.4, 0.6, 0.9]));
+    const affectionate = new CatBehavior(randomFrom([0.32, 0.6]));
     const needs = { fullness: 100, energy: 100, affection: 0 };
     const desktop = { ...context().desktop, cursor: { x: 550, y: 750 } };
     const calmContext = context({ settings: { ...DEFAULT_SETTINGS, personality: 'calm' }, needs, desktop });
@@ -190,7 +190,7 @@ describe('cat behavior', () => {
   });
 
   it('does not chase a horizontally close cursor far above the cat', () => {
-    const draws = [0.25, 0.6];
+    const draws = [0.21, 0.6];
     const cat = new CatBehavior(() => draws.shift() ?? 0.9);
     const ctx = context({
       settings: { ...DEFAULT_SETTINGS, personality: 'affectionate' },

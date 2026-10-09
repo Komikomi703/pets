@@ -117,6 +117,65 @@ test('settings preview stays still when reduced motion is requested', async ({ p
   expect(await preview.evaluate((canvas: HTMLCanvasElement) => canvas.toDataURL())).toBe(first);
 });
 
+test('daily care fits above the fold at desktop and narrow sizes', async ({ page }) => {
+  for (const viewport of [{ width: 860, height: 740 }, { width: 640, height: 550 }, { width: 390, height: 780 }]) {
+    await page.setViewportSize(viewport);
+    await settings(page);
+    for (const name of ['ごはん', 'なでる', 'あそぶ']) {
+      await expect(page.getByRole('button', { name, exact: true })).toBeInViewport({ ratio: 1 });
+    }
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(viewport.width);
+    await expect(page.locator('.character-selected:visible')).toHaveText('✓ 一緒にいる');
+    await expect(page.getByRole('progressbar', { name: 'おなか' })).toHaveAttribute('aria-valuetext', 'おなかいっぱい、78%');
+  }
+});
+
+for (const character of ['猫', 'ググガガ']) {
+  test(`${character} settings preview responds to care and returns to rest`, async ({ page }) => {
+    await settings(page);
+    await page.getByRole('button', { name: character, exact: true }).click();
+    const preview = page.locator('.cat-preview');
+    await expect(preview).toHaveAttribute('data-state', 'sit');
+    await page.clock.install();
+    for (const [label, state, description] of [
+      ['ごはん', 'eat', '食べている'], ['なでる', 'happy', '喜んでいる'], ['あそぶ', 'play', '遊んでいる'],
+    ]) {
+      const before = await preview.evaluate((canvas: HTMLCanvasElement) => canvas.toDataURL());
+      await page.getByRole('button', { name: label, exact: true }).click();
+      await page.clock.runFor(400);
+      await expect(preview).toHaveAttribute('data-state', state!);
+      await expect(preview).toHaveAttribute('aria-label', new RegExp(description!));
+      expect(await preview.evaluate((canvas: HTMLCanvasElement) => canvas.toDataURL())).not.toBe(before);
+      await page.clock.fastForward(4200);
+      await page.clock.runFor(100);
+      await expect(preview).toHaveAttribute('data-state', 'sit');
+    }
+  });
+}
+
+test('reduced motion shows a static care pose and switching clears the reaction', async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await settings(page);
+  const preview = page.locator('.cat-preview');
+  await expect(preview).toHaveAttribute('data-state', 'sit');
+  const idle = await preview.evaluate((canvas: HTMLCanvasElement) => canvas.toDataURL());
+  await page.getByRole('button', { name: 'なでる', exact: true }).click();
+  await expect(preview).toHaveAttribute('data-state', 'happy');
+  const happy = await preview.evaluate((canvas: HTMLCanvasElement) => canvas.toDataURL());
+  expect(happy).not.toBe(idle);
+  await page.waitForTimeout(320);
+  expect(await preview.evaluate((canvas: HTMLCanvasElement) => canvas.toDataURL())).toBe(happy);
+  await page.getByRole('button', { name: 'ググガガ', exact: true }).click();
+  await expect(preview).toHaveAttribute('data-character', 'gugugaga');
+  await expect(preview).toHaveAttribute('data-state', 'sit');
+  await expect(page.locator('.inline-status')).toBeEmpty();
+  await expect(page.getByRole('button', { name: 'ググガガ', exact: true }).locator('.character-selected')).toBeVisible();
+  await page.getByLabel('集中モード').check();
+  await page.getByRole('button', { name: 'ごはん', exact: true }).click();
+  await expect(page.locator('.inline-status')).toContainText('集中モード');
+  await expect(preview).toHaveAttribute('data-state', 'sit');
+});
+
 test('discard exit appears only after a save error and asks before losing changes', async ({ page }) => {
   await page.goto('/?view=gallery');
   const result = await page.evaluate(async () => {
@@ -241,7 +300,7 @@ test('context menu still opens settings and supports keyboard selection', async 
   await popup.close();
 });
 
-test('all ten states draw visible, unclipped silhouettes and useful hit masks', async ({ page }) => {
+test('all cat states draw visible, unclipped silhouettes and useful hit masks', async ({ page }) => {
   await page.goto('/?view=gallery');
   const samples = await page.evaluate(async () => {
     const catUrl = '/src/render/cat.ts';
@@ -269,7 +328,7 @@ test('all ten states draw visible, unclipped silhouettes and useful hit masks', 
       return result;
     })));
   });
-  expect(samples).toHaveLength(80);
+  expect(samples).toHaveLength(120);
   for (const sample of samples) {
     expect(sample.count, JSON.stringify(sample)).toBeGreaterThan(4000);
     expect(sample.border, JSON.stringify(sample)).toBe(0);
@@ -285,7 +344,7 @@ test('gallery, settings and preview screenshots', async ({ page }) => {
   await mkdir(artifacts, { recursive: true });
   await page.setViewportSize({ width: 1450, height: 800 });
   await page.goto('/?view=gallery');
-  await expect(page.locator('.gallery-grid canvas')).toHaveCount(10);
+  await expect(page.locator('.gallery-grid canvas')).toHaveCount(15);
   await page.screenshot({ path: `${artifacts}/gallery.png`, fullPage: true });
   await page.setViewportSize({ width: 860, height: 1000 });
   await settings(page);
@@ -387,7 +446,7 @@ test('Gugugaga reacts to direct touch, sulks, lands, clamps and supports focus/m
 
 test('all Gugugaga parts stay inside the canvas, animate and leave transparent hit margins', async ({ page }) => {
   await page.goto('/?view=gallery&character=gugugaga');
-  await expect(page.locator('.gallery-grid canvas')).toHaveCount(14);
+  await expect(page.locator('.gallery-grid canvas')).toHaveCount(19);
   const samples = await page.evaluate(async () => {
     const renderUrl = '/src/render/gugugaga.ts', typesUrl = '/src/core/types.ts';
     const [{ GugugagaRenderer, loadGugugaga }, { PET_STATES }] = await Promise.all([
@@ -418,7 +477,7 @@ test('all Gugugaga parts stay inside the canvas, animate and leave transparent h
   const idle = samples.find(s => s.state === 'idle' && s.time === 0)!;
   expect((idle.maxY - idle.minY) / 2 * .875).toBeGreaterThan(130);
   expect((idle.maxY - idle.minY) / 2 * .875).toBeLessThan(150);
-  for (const state of ['idle', 'walk', 'happy', 'sulk', 'eat', 'play', 'sleep', 'dragged', 'land', 'wake', 'stumble']) {
+  for (const state of ['idle', 'walk', 'happy', 'sulk', 'eat', 'play', 'sleep', 'dragged', 'land', 'wake', 'stumble', 'observe', 'yawn', 'sniff', 'wave', 'hop']) {
     expect(new Set(samples.filter(s => s.state === state).map(s => s.image)).size, state).toBeGreaterThan(1);
   }
   await page.screenshot({ path: `${artifacts}/gugugaga-gallery.png`, fullPage: true });

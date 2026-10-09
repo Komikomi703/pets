@@ -1,5 +1,6 @@
 import type { HitMask, PetFrame } from '../core/types';
 import { blinkAt, ease, footstep } from './motion';
+import { drawGround, drawHearts } from './accents';
 
 let atlas: HTMLImageElement | null = null;
 let loading: Promise<void> | null = null;
@@ -43,13 +44,26 @@ const STRIDE = 5.5;
 interface Pose {
   lift: number; tilt: number; head: number; breath: number;
   left: number; right: number; leftX: number; rightX: number; leftFoot: number; rightFoot: number;
-  squat: number; closed: number; smile: number; pout: number; lean: number;
+  squat: number; closed: number; smile: number; pout: number; lean: number; yawn: number;
 }
 function pose(frame: PetFrame, phase: number, elapsed: number): Pose {
   const t = frame.time, state = frame.state;
   const p: Pose = { lift: 0, tilt: 0, head: Math.sin(elapsed * .65) * .014, breath: Math.sin(elapsed * 2) * .65,
     left: .04, right: -.04, leftX: 0, rightX: 0, leftFoot: 0, rightFoot: 0,
-    squat: 0, closed: blinkAt(elapsed), smile: 0, pout: 0, lean: 0 };
+    squat: 0, closed: blinkAt(elapsed), smile: 0, pout: 0, lean: 0, yawn: 0 };
+  if (state === 'observe') { p.head = Math.sin(t * 2.1) * .16; p.lean = Math.sin(t * 2.1) * 3; }
+  if (state === 'yawn') {
+    p.yawn = Math.sin(Math.min(1, t / 2.4) * Math.PI) ** 2;
+    p.closed = p.yawn; p.head = -p.yawn * .1; p.left = -.9 * p.yawn; p.squat = p.yawn * 3;
+  }
+  if (state === 'sniff') { p.head = .12 + Math.sin(t * 9) * .035; p.lean = 5; p.squat = 5; p.left = -.2; p.right = .2; }
+  if (state === 'wave') { p.right = -1.35 + Math.sin(t * 8) * .28; p.head = -.1; p.smile = .85; p.closed = .9; }
+  if (state === 'hop') {
+    const flight = Math.min(1, Math.max(0, (t - .3) / .7));
+    p.lift = -Math.sin(flight * Math.PI) * 22;
+    p.squat = (t < .3 ? Math.sin(t / .3 * Math.PI) : Math.sin(Math.min(1, Math.max(0, (t - 1) / .6)) * Math.PI)) * 6;
+    p.left = .6; p.right = -.6; p.smile = .85;
+  }
   if (state === 'idle') p.head += Math.sin(Math.min(1, t / 1.5) * Math.PI) * .075;
   if (state === 'walk' || state === 'play') {
     const moving = frame.speed > .1 ? 1 : 0;
@@ -97,13 +111,12 @@ function face(c: CanvasRenderingContext2D, p: Pose, frame: PetFrame) {
       c.bezierCurveTo(x + 8.5, bottom + 1.8, x - 7.9, bottom + 2.3, x - 8.1, top + .6); c.closePath(); c.clip();
       c.fillStyle = '#fff7ec'; c.fillRect(x - 10, y - 9, 20, 19);
       const g = c.createLinearGradient(0, y - 6, 0, y + 8);
-      g.addColorStop(0, '#29475b'); g.addColorStop(.52, '#5998b4'); g.addColorStop(1, '#9cd5df');
+      g.addColorStop(0, '#3e5662'); g.addColorStop(1, '#8ebbc4');
       oval(c, x + glance, y + 1.2, 6.4, 8, '#5894b3'); c.fillStyle = g; c.fill();
       oval(c, x + glance, y + .3, 2.45, 5, '#29455b');
       oval(c, x + glance - 2.2, y - 2.7, 1.75, 1.6, '#fff9ed');
-      oval(c, x + glance + 2.6, y + 4.9, .75, .8, '#d2f3f1');
     }
-    c.restore(); c.strokeStyle = '#29282e'; c.lineCap = 'round'; c.lineWidth = 1.75; c.beginPath();
+    c.restore(); c.strokeStyle = '#493c37'; c.lineCap = 'round'; c.lineWidth = 2; c.beginPath();
     if (close > .9) { c.moveTo(x - 6.5, y + 2); c.quadraticCurveTo(x, y + (p.smile > .6 ? -3.8 : 5.4), x + 6.5, y + 2); }
     else { c.moveTo(x - 8.4, y - 5 + close * 6.8); c.quadraticCurveTo(x, y - 6.6 + close * 6.8, x + 8, y - 5.3 + close * 6.8); }
     c.stroke();
@@ -111,7 +124,8 @@ function face(c: CanvasRenderingContext2D, p: Pose, frame: PetFrame) {
   }
   c.save(); c.translate(0, 4);
   c.strokeStyle = '#885950'; c.lineWidth = 1.2; c.lineCap = 'round'; c.beginPath();
-  if (p.pout) { c.moveTo(-2.5, 28.5); c.quadraticCurveTo(0, 26.5, 2.5, 28.5); c.stroke(); }
+  if (p.yawn > .05) { oval(c, 0, 29, 2 + p.yawn * 2, 1 + p.yawn * 5, '#814b4b'); }
+  else if (p.pout) { c.moveTo(-2.5, 28.5); c.quadraticCurveTo(0, 26.5, 2.5, 28.5); c.stroke(); }
   else if (p.smile > .6) {
     c.moveTo(-5, 27); c.quadraticCurveTo(0, 25.5, 5, 27); c.bezierCurveTo(5, 36, -5, 36, -5, 27);
     c.fillStyle = '#814b4b'; c.fill(); c.stroke(); oval(c, 0, 31.1, 2.5, 1.45, '#efa59b');
@@ -142,17 +156,14 @@ function figure(c: CanvasRenderingContext2D, p: Pose, frame: PetFrame) {
   c.restore();
 }
 function effects(c: CanvasRenderingContext2D, frame: PetFrame) {
-  oval(c, 128, 209, 43, 2.5, '#4348531c');
-  if (frame.state === 'happy') {
-    c.fillStyle = '#dd8397'; c.font = '17px sans-serif';
-    c.fillText('♥', 187, 74 - frame.time % 1 * 9); c.font = '12px sans-serif'; c.fillText('♥', 64, 92 - frame.time % 1 * 9);
-  }
+  drawGround(c, 209, 43);
+  if (frame.state === 'happy') drawHearts(c, frame.time, 185, 77);
   if (frame.state === 'play') {
     const x = 128 + frame.direction * (66 + Math.sin(frame.time * 3) * 10), y = 120 + Math.sin(frame.time * 4) * 12;
     oval(c, x - 4, y, 4 + Math.sin(frame.time * 18) * 2, 6, '#bda4da'); oval(c, x + 4, y, 4 + Math.sin(frame.time * 18) * 2, 6, '#f0bec8'); oval(c, x, y + 1, 1.2, 4, '#776881');
   }
   if (frame.state === 'sleep' || (frame.state === 'stumble' && frame.time > .5)) {
-    c.font = 'bold 13px system-ui'; c.fillStyle = '#829cba'; c.fillText(frame.state === 'sleep' ? 'z z' : '？', 190, 81 + Math.sin(frame.time * 2) * 2);
+    c.font = 'bold 13px system-ui'; c.fillStyle = '#a88473'; c.fillText(frame.state === 'sleep' ? 'z z' : '？', 190, 81 + Math.sin(frame.time * 2) * 2);
   }
   if (frame.speech) {
     c.fillStyle = '#fff9ed'; c.strokeStyle = '#dfcdb9'; c.lineWidth = 1;
@@ -191,7 +202,7 @@ export class GugugagaRenderer {
     this.current = current; this.previous = { ...frame }; this.pixels = null;
     this.c.setTransform(2, 0, 0, 2, 0, 0); this.c.clearRect(0, 0, 256, 224); figure(this.c, current, frame);
     this.visible.setTransform(2, 0, 0, 2, 0, 0); this.visible.clearRect(0, 0, 256, 224);
-    effects(this.visible, frame); this.visible.setTransform(1, 0, 0, 1, 0, 0); this.visible.save(); this.visible.shadowColor = '#b9c5d857'; this.visible.shadowBlur = 1.5; this.visible.drawImage(this.layer, 0, 0); this.visible.restore();
+    effects(this.visible, frame); this.visible.setTransform(1, 0, 0, 1, 0, 0); this.visible.save(); this.visible.shadowColor = '#e3c9ae57'; this.visible.shadowBlur = 1.5; this.visible.drawImage(this.layer, 0, 0); this.visible.restore();
   }
   private alpha() { return this.pixels ??= this.c.getImageData(0, 0, 512, 448).data; }
   hitTest(x: number, y: number): boolean {

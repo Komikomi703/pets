@@ -1,7 +1,7 @@
 export const CAT_WIDTH = 256;
 export const CAT_HEIGHT = 224;
 export const CAT_BASELINE = 206;
-export const CAT_STATES = ['idle', 'walk', 'sit', 'sleep', 'stretch', 'groom', 'happy', 'eat', 'play', 'dragged'] as const;
+export const CAT_STATES = ['idle', 'walk', 'sit', 'sleep', 'stretch', 'groom', 'happy', 'eat', 'play', 'dragged', 'observe', 'yawn', 'sniff', 'wave', 'hop'] as const;
 export type CatState = typeof CAT_STATES[number];
 export const CHARACTER_IDS = ['cat', 'gugugaga'] as const;
 export type CharacterId = typeof CHARACTER_IDS[number];

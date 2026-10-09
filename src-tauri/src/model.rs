@@ -322,9 +322,9 @@ pub struct NativeFrame {
     pub state: String,
     pub mask: Option<HitMask>,
 }
-pub const STATES: [&str; 14] = [
+pub const STATES: [&str; 19] = [
     "idle", "walk", "sit", "sleep", "stretch", "groom", "happy", "eat", "play", "dragged", "sulk",
-    "land", "wake", "stumble",
+    "land", "wake", "stumble", "observe", "yawn", "sniff", "wave", "hop",
 ];
 #[cfg(test)]
 mod tests {

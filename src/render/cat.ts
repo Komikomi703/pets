@@ -1,5 +1,6 @@
 import { CAT_BASELINE, CAT_HEIGHT, CAT_WIDTH, type CatFrame, type CatState, type HitMask } from '../core/types';
 import { blinkAt, footstep } from './motion';
+import { drawGround, drawHearts } from './accents';
 
 const SCALE = 2;
 const WALK_STRIDE = 9;
@@ -17,7 +18,7 @@ interface Pose {
   rearX: number; rearY: number; frontX: number; frontY: number;
   farRearX: number; farRearY: number; farFrontX: number; farFrontY: number;
   eyeClose: number; smile: number; ears: number; pawUp: number;
-  curl: number; blush: number;
+  curl: number; blush: number; yawn: number;
 }
 
 function mix(a: number, b: number, t: number): number { return a + (b - a) * t; }
@@ -40,10 +41,43 @@ function poseFor(state: CatState, time: number, speed: number, walkPhase: number
     rearX: 92, rearY: 198, frontX: 146, frontY: 199,
     farRearX: 110, farRearY: 197, farFrontX: 163, farFrontY: 197,
     eyeClose: blink, smile: .12, ears: Math.max(0, Math.sin(elapsed * .8)) ** 24 * .3, pawUp: 0,
-    curl: 0, blush: .24,
+    curl: 0, blush: .24, yawn: 0,
   };
 
   switch (state) {
+    case 'observe':
+      pose.hx += Math.sin(time * 2.1) * 7;
+      pose.hy -= 4; pose.headTilt = Math.sin(time * 2.1) * .13;
+      pose.ears = -.25; pose.tail = Math.sin(time * 1.3) * 9;
+      break;
+    case 'yawn': {
+      const opening = Math.sin(clamp(time / 2.4) * Math.PI) ** 2;
+      pose.hy -= opening * 9; pose.headTilt = -opening * .12;
+      pose.eyeClose = opening; pose.yawn = opening;
+      pose.ears = opening * .3; pose.tail = -7;
+      break;
+    }
+    case 'sniff':
+      pose.hx = 168 + Math.sin(time * 7) * 2; pose.hy = 157 + Math.sin(time * 9) * 2;
+      pose.headTilt = .12; pose.by = 173; pose.bh = 28;
+      pose.tail = 12; pose.ears = -.18;
+      break;
+    case 'wave':
+      pose.bx = 125; pose.bw = 39; pose.hx = 138; pose.hy = 127;
+      pose.frontX = 178 + Math.sin(time * 8) * 6;
+      pose.frontY = 140 + Math.cos(time * 8) * 6;
+      pose.pawUp = 1; pose.smile = 1; pose.eyeClose = .9;
+      pose.tail = 8 + Math.sin(time * 4) * 6; pose.blush = .5;
+      break;
+    case 'hop': {
+      const flight = clamp((time - .3) / .7);
+      const lift = Math.sin(flight * Math.PI);
+      const crouch = time < .3 ? Math.sin(time / .3 * Math.PI) : Math.sin(clamp((time - 1) / .6) * Math.PI);
+      pose.lift = -lift * 24; pose.by += crouch * 5; pose.bh -= crouch * 5;
+      pose.hy += crouch * 3; pose.frontY -= lift * 7; pose.farFrontY -= lift * 7;
+      pose.tail = 12 + lift * 9; pose.smile = .9;
+      break;
+    }
     case 'walk': {
       const motion = speed > .1 ? 1 : 0;
       const near = footstep(walkPhase, WALK_STRIDE, 6), far = footstep(walkPhase + Math.PI, WALK_STRIDE, 6);
@@ -266,6 +300,12 @@ function head(ctx: CanvasRenderingContext2D, p: Pose, lookX: number, lookY: numb
   ctx.beginPath(); ctx.moveTo(0, 20); ctx.lineTo(0, 21.8);
   ctx.quadraticCurveTo(-2.1, 24 + p.smile, -4.5, 22.8);
   ctx.moveTo(0, 21.8); ctx.quadraticCurveTo(2.1, 24 + p.smile, 4.5, 22.8); ctx.stroke();
+  if (p.yawn > .05) {
+    ellipse(ctx, 0, 25, 3 + p.yawn * 3, p.yawn * 8);
+    ctx.fillStyle = '#885550'; ctx.fill();
+    ellipse(ctx, 0, 27 + p.yawn * 3, p.yawn * 3, p.yawn * 2);
+    ctx.fillStyle = ROSE; ctx.fill();
+  }
   for (const side of [-1, 1]) {
     ctx.strokeStyle = '#b89377'; ctx.lineWidth = .95;
     for (const i of [-1, 1]) {
@@ -306,23 +346,9 @@ function drawCat(ctx: CanvasRenderingContext2D, p: Pose, frame: CatFrame): void 
 function decorations(ctx: CanvasRenderingContext2D, frame: CatFrame): void {
   ctx.save();
   // The ground contact is deliberately omitted from the alpha hit canvas.
-  const shadow = ctx.createRadialGradient(128, CAT_BASELINE + 1, 5, 128, CAT_BASELINE + 1, 71);
-  shadow.addColorStop(0, 'rgba(101,70,49,.12)');
-  shadow.addColorStop(1, 'rgba(101,70,49,0)');
-  ctx.fillStyle = shadow; ellipse(ctx, 128, CAT_BASELINE + 1, 62, 3.5); ctx.fill();
+  drawGround(ctx, CAT_BASELINE + 1, 62);
   if (frame.direction === -1) { ctx.translate(CAT_WIDTH, 0); ctx.scale(-1, 1); }
-  if (frame.state === 'happy') {
-    const t = frame.time;
-    for (let i = 0; i < 2; i++) {
-      const x = 181 + i * 15 + Math.sin(t * 2 + i) * 3;
-      const y = 77 - i * 18 - (t * 14 + i * 11) % 13;
-      const size = 6 - i * .6;
-      ctx.beginPath(); ctx.moveTo(x, y + size);
-      ctx.bezierCurveTo(x - size * 1.6, y, x - size * .9, y - size, x, y - size * .35);
-      ctx.bezierCurveTo(x + size * .9, y - size, x + size * 1.6, y, x, y + size);
-      ctx.fillStyle = i === 1 ? '#eab0a4' : '#dc8e86'; ctx.fill();
-    }
-  }
+  if (frame.state === 'happy') drawHearts(ctx, frame.time);
   if (frame.state === 'eat') {
     ctx.beginPath(); ctx.ellipse(177, 202, 26, 6, 0, 0, Math.PI * 2);
     ctx.fillStyle = '#a77b64'; ctx.fill();

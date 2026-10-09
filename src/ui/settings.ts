@@ -1,7 +1,7 @@
 import './settings.css';
 import { createRenderer, prepareCharacters, type CharacterRenderer } from '../render/characters';
 import { CHARACTERS } from '../core/characters';
-import type { PetAction, Personality, CharacterId, Settings, Snapshot } from '../core/types';
+import type { PetAction, PetState, Personality, CharacterId, Settings, Snapshot } from '../core/types';
 import type { Platform, Unsubscribe } from '../platform/platform';
 
 type SettingKey = keyof Settings;
@@ -62,6 +62,9 @@ export async function mountSettings(root: HTMLElement, platform: Platform): Prom
   let raf = 0;
   let previewStart = 0;
   let lastDraw = 0;
+  let previewState: PetState = 'sit';
+  let reactionTimer = 0;
+  let carePending = false;
   const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
   const dirty = new Set<SettingKey>();
   const requestIds = new Map<SettingKey, number>();
@@ -83,20 +86,21 @@ export async function mountSettings(root: HTMLElement, platform: Platform): Prom
   const hero = element('section', 'hero-card');
   hero.setAttribute('aria-label', 'まどねこのプレビュー');
   const heroCopy = element('div', 'hero-copy');
-  heroCopy.append(element('span', 'eyebrow', 'YOUR LITTLE COMPANION'));
-  const heroTitle = element('h1', '', '今日も、ここにいるよ。');
-  const heroDescription = element('p', '', 'お仕事のそばで、気ままに過ごす小さなねこ。様子を見ながら、お世話してあげてください。');
-  const catName = element('span', 'hero-name', '読み込み中…');
-  heroCopy.append(heroTitle, heroDescription, catName);
+  heroCopy.append(element('span', 'eyebrow', '今日も、そばに。'));
+  const catName = element('h1', 'hero-name', '読み込み中…');
+  const heroDescription = element('p', 'pet-mood');
+  heroCopy.append(catName, heroDescription);
   const stage = element('div', 'hero-stage');
   const canvas = element('canvas', 'cat-preview');
   canvas.setAttribute('role', 'img');
   canvas.setAttribute('aria-label', 'まどねこのアニメーションプレビュー');
-  stage.append(canvas, element('span', 'stage-shadow'));
-  hero.append(heroCopy, stage);
+  stage.append(canvas);
+  const companion = element('div', 'companion');
+  companion.append(heroCopy, stage);
+  hero.append(companion);
 
   const picker = element('section', 'panel character-picker');
-  picker.append(element('div', 'section-kicker', 'COMPANIONS'), element('h2', '', 'いっしょに過ごす子'));
+  picker.append(element('h2', '', 'いっしょに過ごす子'));
   const choices = element('div', 'character-choices');
   for (const id of ['cat', 'gugugaga'] as const) {
     const card = element('button', 'character-choice'); card.type = 'button';
@@ -105,29 +109,31 @@ export async function mountSettings(root: HTMLElement, platform: Platform): Prom
     const thumbnail = createRenderer(thumb, id);
     thumbnail.draw({ state: 'idle', time: 1.2, direction: 1, speed: 0, lookX: 0, lookY: 0 }); thumbnail.dispose();
     const copy = element('span', 'character-copy'); copy.append(element('strong', '', CHARACTERS[id].label), element('small', '', CHARACTERS[id].description));
+    const selected = element('span', 'character-selected', '✓ 一緒にいる');
+    copy.append(selected);
     card.append(thumb, copy); choices.append(card); characterButtons.set(id, card);
     card.addEventListener('click', () => {
-      if (switching || dirty.size || snapshot?.data.settings.character === id) return;
+      if (switching || carePending || dirty.size || snapshot?.data.settings.character === id) return;
       switching = true;
       for (const control of controls.values()) control.disabled = true;
       for (const button of characterButtons.values()) button.disabled = true;
+      for (const button of actionButtons.values()) button.disabled = true;
       void update('character', id).finally(() => {
         switching = false;
         for (const control of controls.values()) control.disabled = false;
         for (const button of characterButtons.values()) button.disabled = false;
+        for (const button of actionButtons.values()) button.disabled = false;
       });
     });
   }
-  picker.append(choices, element('p', 'field-help', '名前とお世話の状態は、この子ごとに覚えています。一度に表示するのは1体です。'));
+  picker.append(choices, element('p', 'field-help', '名前とお世話の状態は、それぞれの子が覚えています。'));
   const columns = element('div', 'settings-columns');
-  const left = element('div', 'settings-column');
-  const right = element('div', 'settings-column');
-  const care = element('section', 'panel care-panel');
-  care.append(element('div', 'section-kicker', 'CARE'), element('h2', '', 'お世話'));
-  const careIntro = element('p', 'section-intro', 'いまの気分を見ながら、そっと声をかけてあげて。');
+  const care = element('section', 'care-panel');
+  care.append(element('h2', '', 'お世話'));
+  const careIntro = element('p', 'section-intro', '今日は、なにをして過ごそう？');
   care.append(careIntro);
   const needs = element('div', 'needs');
-  const needRows = new Map<'fullness' | 'energy' | 'affection', { fill: HTMLElement; value: HTMLElement }>();
+  const needRows = new Map<'fullness' | 'energy' | 'affection', { fill: HTMLElement; value: HTMLElement; feeling: HTMLElement }>();
   const needLabels = [
     ['fullness', 'おなか', 'bowl'], ['energy', 'げんき', 'spark'], ['affection', 'なかよし', 'heart'],
   ] as const;
@@ -138,6 +144,7 @@ export async function mountSettings(root: HTMLElement, platform: Platform): Prom
     name.append(icon(symbol), document.createTextNode(label));
     const value = element('span', 'need-value', '—');
     top.append(name, value);
+    const feeling = element('span', 'need-feeling');
     const track = element('div', `need-track need-${key}`);
     track.setAttribute('role', 'progressbar');
     track.setAttribute('aria-label', label);
@@ -145,9 +152,9 @@ export async function mountSettings(root: HTMLElement, platform: Platform): Prom
     track.setAttribute('aria-valuemax', '100');
     const fill = element('span', 'need-fill');
     track.append(fill);
-    row.append(top, track);
+    row.append(top, feeling, track);
     needs.append(row);
-    needRows.set(key, { fill, value });
+    needRows.set(key, { fill, value, feeling });
   }
   care.append(needs);
   const careActions = element('div', 'care-actions');
@@ -166,9 +173,10 @@ export async function mountSettings(root: HTMLElement, platform: Platform): Prom
   actionStatus.setAttribute('role', 'status');
   actionStatus.setAttribute('aria-live', 'polite');
   care.append(actionStatus);
+  hero.append(care);
 
   const identity = element('section', 'panel');
-  identity.append(element('div', 'section-kicker', 'PERSONALITY'), element('h2', '', 'この子らしさ'));
+  identity.append(element('h2', '', 'この子らしさ'));
   const nameField = element('div', 'field');
   const nameLabel = element('label', 'field-label', 'おなまえ');
   const nameInput = element('input', 'text-input');
@@ -201,8 +209,12 @@ export async function mountSettings(root: HTMLElement, platform: Platform): Prom
   identity.append(nameField, personalityField);
 
   const preferences = element('section', 'panel');
-  preferences.append(element('div', 'section-kicker', 'PREFERENCES'), element('h2', '', '暮らしの設定'));
-  const slider = (key: 'size' | 'speed' | 'volume', label: string, min: number, max: number, step: number, help: string) => {
+  preferences.append(element('h2', '', '見た目と動き'));
+  const soundPanel = element('section', 'panel');
+  soundPanel.append(element('h2', '', '音とお返事'));
+  const windowPanel = element('section', 'panel');
+  windowPanel.append(element('h2', '', '起動と表示'));
+  const slider = (parent: HTMLElement, key: 'size' | 'speed' | 'volume', label: string, min: number, max: number, step: number, help: string) => {
     const field = element('div', 'field slider-field');
     const line = element('div', 'field-line');
     const caption = element('label', 'field-label', label);
@@ -215,13 +227,12 @@ export async function mountSettings(root: HTMLElement, platform: Platform): Prom
     line.append(caption, output);
     field.append(line, input, element('p', 'field-help', help));
     controls.set(key, input); values.set(key, output);
-    preferences.append(field);
+    parent.append(field);
   };
-  slider('size', '大きさ', 65, 150, 5, 'ググガガは100%で高さ約140px。選んだ子に合わせて調整できます。');
-  slider('speed', '歩く速さ', 40, 180, 10, 'ゆっくりから、ちょっと元気まで');
-  slider('volume', '音量', 0, 100, 5, '反応の音・声の大きさ');
-  const voiceHelp = element('p', 'field-help voice-help'); preferences.append(voiceHelp);
-  const switches = element('div', 'switches');
+  slider(preferences, 'size', '大きさ', 65, 150, 5, 'デスクトップに表示する大きさ');
+  slider(preferences, 'speed', '歩く速さ', 40, 180, 10, 'ゆっくりから、ちょっと元気まで');
+  slider(soundPanel, 'volume', '音量', 0, 100, 5, 'お返事の音の大きさ');
+  const voiceHelp = element('p', 'field-help voice-help'); soundPanel.append(voiceHelp);
   const switchDefinitions = [
     ['sound', '反応の音・声', '初期状態はオフ。選んだ子の音でお返事します'],
     ['alwaysOnTop', 'いつも手前に表示', 'ほかのウィンドウの上で過ごします'],
@@ -237,13 +248,12 @@ export async function mountSettings(root: HTMLElement, platform: Platform): Prom
     input.type = 'checkbox'; input.id = `pet-${key}`;
     const track = element('span', 'switch-track');
     row.append(copy, input, track);
-    switches.append(row);
+    (key === 'sound' ? soundPanel : key === 'followMouse' ? preferences : windowPanel).append(row);
     controls.set(key, input);
   }
-  preferences.append(switches);
 
   const display = element('section', 'panel display-panel');
-  display.append(element('div', 'section-kicker', 'WINDOW'), element('h2', '', '表示と復帰'));
+  display.append(element('h2', '', '表示と復帰'));
   const visibilityNote = element('p', 'section-intro', 'この子が見えなくなっても、ここから呼び戻せます。');
   const displayActions = element('div', 'display-actions');
   const visibilityButton = element('button', 'secondary-button');
@@ -256,35 +266,80 @@ export async function mountSettings(root: HTMLElement, platform: Platform): Prom
   browserNotice.hidden = platform.native;
   display.append(browserNotice);
 
-  left.append(care, identity);
-  right.append(preferences, display);
-  columns.append(left, right);
+  columns.append(identity, preferences, soundPanel, windowPanel);
+  const settingsHeading = element('div', 'settings-heading');
+  settingsHeading.append(element('h2', '', '暮らしの設定'), element('p', 'field-help', '変更は自動で保存されます。'));
+  const settingsStatus = element('p', 'settings-status');
+  settingsStatus.setAttribute('role', 'status');
+  settingsStatus.setAttribute('aria-live', 'polite');
   const notices = element('div', 'notices');
   notices.setAttribute('role', 'status');
   notices.setAttribute('aria-live', 'polite');
   const footer = element('footer', 'settings-footer');
   footer.append(element('p', '', 'クリック：なでる　・　ドラッグ：移動　・　右クリック：隠す／設定／終了'));
   footer.append(element('p', '', 'この画面を閉じても、この子は画面やトレイで過ごします。'));
-  content.append(hero, picker, columns, notices, footer);
+  content.append(hero, picker, settingsHeading, columns, display, settingsStatus, notices, footer);
   page.append(header, content);
   root.append(page);
 
-  function showError(message: string): void {
-    actionStatus.textContent = message;
-    actionStatus.dataset.kind = 'error';
+  function showError(message: string, target = actionStatus): void {
+    target.textContent = message;
+    target.dataset.kind = 'error';
+  }
+
+  function restMood(): string {
+    if (!snapshot) return '';
+    if (snapshot.data.settings.focusMode) return '集中モードで、静かにそばにいます。';
+    const { fullness, energy, affection } = snapshot.data.needs;
+    if (fullness < 35) return 'おなかがすいてきたみたい。';
+    if (energy < 35) return '少し眠たそう。のんびりしよう。';
+    if (affection < 50) return '少しかまってほしそう。';
+    return 'いっしょにいられて、ごきげんです。';
+  }
+
+  function setPreviewState(state: PetState): void {
+    previewState = state;
+    previewStart = performance.now();
+    lastDraw = 0;
+    // A fresh renderer gives reduced-motion users the final pose without tweening.
+    if (reducedMotion.matches && renderer) {
+      renderer.dispose();
+      renderer = createRenderer(canvas, previewCharacter);
+    }
+    visibilityChanged();
+  }
+
+  function react(action: PetAction): void {
+    window.clearTimeout(reactionTimer);
+    setPreviewState(action === 'feed' ? 'eat' : action === 'pet' ? 'happy' : 'play');
+    heroDescription.textContent = action === 'feed' ? 'もぐもぐ、おいしいね。' : action === 'pet' ? 'なでてもらって、うれしそう。' : 'いっしょに遊んで、ごきげん！';
+    reactionTimer = window.setTimeout(() => {
+      reactionTimer = 0;
+      if (disposed) return;
+      setPreviewState('sit');
+      heroDescription.textContent = restMood();
+    }, 2600);
   }
 
   function render(current: Snapshot): void {
     if (disposed) return;
     const settings = current.data.settings;
     if (!renderer || previewCharacter !== settings.character) {
+      window.clearTimeout(reactionTimer); reactionTimer = 0; previewState = 'sit';
+      actionStatus.textContent = '';
       renderer?.dispose(); previewCharacter = settings.character; renderer = createRenderer(canvas, previewCharacter);
       previewStart = performance.now(); lastDraw = 0; visibilityChanged();
     }
     canvas.dataset.character = settings.character;
-    heroDescription.textContent = CHARACTERS[settings.character].description;
+    if (settings.focusMode && previewState !== 'sit') {
+      window.clearTimeout(reactionTimer); reactionTimer = 0; setPreviewState('sit');
+    }
+    if (!reactionTimer) heroDescription.textContent = restMood();
     voiceHelp.textContent = settings.character === 'gugugaga' ? '声は未収録です。いまは「ぐぐがが〜」の吹き出しでお返事します。' : '猫は、やさしい電子音でお返事します。';
-    for (const [id, button] of characterButtons) button.setAttribute('aria-pressed', String(id === settings.character));
+    for (const [id, button] of characterButtons) {
+      button.setAttribute('aria-pressed', String(id === settings.character));
+      button.querySelector<HTMLElement>('.character-selected')!.hidden = id !== settings.character;
+    }
     catName.textContent = `${settings.name} との毎日`;
     for (const [key, control] of controls) {
       if (dirty.has(key) || ((key === 'name' || key === 'size' || key === 'speed' || key === 'volume') && document.activeElement === control)) continue;
@@ -305,9 +360,16 @@ export async function mountSettings(root: HTMLElement, platform: Platform): Prom
     personalityHelp.textContent = descriptions[settings.personality];
     for (const [key, row] of needRows) {
       const amount = Math.round(percent(current.data.needs[key]));
+      const feelings = {
+        fullness: ['おなかがすいた', 'そろそろごはん', 'おなかいっぱい'],
+        energy: ['少しおやすみしたい', 'のんびりしたい', '元気いっぱい'],
+        affection: ['少しかまってほしい', 'だんだんなかよし', 'だいすき！'],
+      };
+      row.feeling.textContent = feelings[key][amount < 35 ? 0 : amount < 70 ? 1 : 2]!;
       row.value.textContent = `${amount}%`;
       row.fill.style.width = `${amount}%`;
       row.fill.parentElement?.setAttribute('aria-valuenow', String(amount));
+      row.fill.parentElement?.setAttribute('aria-valuetext', `${row.feeling.textContent}、${amount}%`);
     }
     visibilityButton.lastChild!.textContent = current.visible ? `${settings.character === 'cat' ? 'ねこ' : 'ググガガ'}を隠す` : `${settings.character === 'cat' ? 'ねこ' : 'ググガガ'}を表示`;
     notices.replaceChildren();
@@ -345,11 +407,11 @@ export async function mountSettings(root: HTMLElement, platform: Platform): Prom
       const next = await platform.updateSettings({ [key]: value } as Pick<Settings, K>);
       accept(next);
       if (!disposed && requestIds.get(key) === id) {
-        actionStatus.textContent = '設定を保存しました。';
-        actionStatus.dataset.kind = 'success';
+        settingsStatus.textContent = '設定を保存しました。';
+        settingsStatus.dataset.kind = 'success';
       }
     } catch (error) {
-      if (!disposed && requestIds.get(key) === id) showError(actionError(error));
+      if (!disposed && requestIds.get(key) === id) showError(actionError(error), settingsStatus);
     } finally {
       if (requestIds.get(key) === id) {
         dirty.delete(key);
@@ -391,25 +453,33 @@ export async function mountSettings(root: HTMLElement, platform: Platform): Prom
   }
   for (const [action, button] of actionButtons) {
     button.addEventListener('click', async () => {
-      if (button.disabled) return;
-      button.disabled = true;
+      if (button.disabled || carePending || switching) return;
+      carePending = true;
+      const character = snapshot?.data.settings.character;
+      for (const control of actionButtons.values()) control.disabled = true;
+      for (const control of characterButtons.values()) control.disabled = true;
       actionStatus.textContent = '';
       try {
         accept(await platform.action(action));
-        if (!disposed) {
+        if (!disposed && snapshot?.data.settings.character === character) {
+          react(action);
           actionStatus.textContent = action === 'feed' ? 'ごはんをあげました。' : action === 'pet' ? 'うれしそうにしています。' : 'いっしょに遊びました。';
           actionStatus.dataset.kind = 'success';
         }
       } catch (error) {
         if (!disposed) showError(actionError(error));
-      } finally { button.disabled = false; }
+      } finally {
+        carePending = false;
+        for (const control of actionButtons.values()) control.disabled = switching;
+        for (const control of characterButtons.values()) control.disabled = switching;
+      }
     });
   }
   visibilityButton.addEventListener('click', async () => {
     if (!snapshot || visibilityButton.disabled) return;
     visibilityButton.disabled = true;
     try { accept(await platform.setVisible(!snapshot.visible)); }
-    catch (error) { if (!disposed) showError(actionError(error)); }
+    catch (error) { if (!disposed) showError(actionError(error), settingsStatus); }
     finally { visibilityButton.disabled = false; }
   });
   rescueButton.addEventListener('click', async () => {
@@ -417,8 +487,8 @@ export async function mountSettings(root: HTMLElement, platform: Platform): Prom
     rescueButton.disabled = true;
     try {
       await platform.rescue();
-      if (!disposed) { actionStatus.textContent = '画面内に戻しました。'; actionStatus.dataset.kind = 'success'; }
-    } catch (error) { if (!disposed) showError(actionError(error)); }
+      if (!disposed) { settingsStatus.textContent = '画面内に戻しました。'; settingsStatus.dataset.kind = 'success'; }
+    } catch (error) { if (!disposed) showError(actionError(error), settingsStatus); }
     finally { rescueButton.disabled = false; }
   });
 
@@ -427,7 +497,10 @@ export async function mountSettings(root: HTMLElement, platform: Platform): Prom
     if (disposed || document.hidden || !renderer) return;
     if (lastDraw === 0 || now - lastDraw >= 80) {
       const time = reducedMotion.matches ? .35 : (now - previewStart) / 1000;
-      renderer.draw({ state: 'sit', time, direction: 1, speed: 0, lookX: 0.15, lookY: 0 });
+      renderer.draw({ state: previewState, time, direction: 1, speed: previewState === 'play' ? 42 : 0, lookX: 0.15, lookY: 0 });
+      canvas.dataset.state = previewState;
+      const poses: Partial<Record<PetState, string>> = { sit: 'くつろいでいる', eat: 'ごはんを食べている', happy: '喜んでいる', play: '遊んでいる' };
+      canvas.setAttribute('aria-label', `${snapshot?.data.settings.name ?? 'ペット'}が${poses[previewState]}`);
       lastDraw = now;
     }
     if (!reducedMotion.matches) raf = requestAnimationFrame(drawPreview);
@@ -439,8 +512,7 @@ export async function mountSettings(root: HTMLElement, platform: Platform): Prom
   function motionChanged(): void {
     cancelAnimationFrame(raf);
     raf = 0;
-    lastDraw = 0;
-    visibilityChanged();
+    setPreviewState(previewState);
   }
   document.addEventListener('visibilitychange', visibilityChanged);
   reducedMotion.addEventListener('change', motionChanged);
@@ -459,6 +531,7 @@ export async function mountSettings(root: HTMLElement, platform: Platform): Prom
   return () => {
     if (disposed) return;
     disposed = true;
+    window.clearTimeout(reactionTimer);
     unsubscribe?.();
     cancelAnimationFrame(raf);
     document.removeEventListener('visibilitychange', visibilityChanged);

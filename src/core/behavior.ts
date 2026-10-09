@@ -4,10 +4,12 @@ import type { BehaviorContext, BehaviorOutput, PetState, PetAction, Personality,
 const MIN_DURATION: Record<PetState, number> = {
   idle: 2.2, walk: 1.1, sit: 4, sleep: 8, stretch: 1.2,
   groom: 2.5, happy: 1.8, eat: 2.5, play: 2.2, dragged: 0, sulk: 2.5, land: .4, wake: .8, stumble: 1.4,
+  observe: 3, yawn: 2.4, sniff: 2.6, wave: 2.4, hop: 1.6,
 };
 const COOLDOWN: Record<PetAction, number> = { pet: 1.5, feed: 4, play: 3 };
 const AUTONOMOUS_COOLDOWN: Partial<Record<PetState, number>> = {
   sleep: 12, stretch: 8, groom: 7, happy: 10, play: 10,
+  observe: 10, yawn: 20, sniff: 12, wave: 15, hop: 14,
 };
 const MAX_SPEED = 52;
 
@@ -175,7 +177,15 @@ export class CatBehavior {
       this.enter(this.character === 'gugugaga' ? 'wake' : 'stretch');
       return;
     }
-    if (['stretch', 'wake', 'land', 'sulk', 'stumble'].includes(this.state)) {
+    if (this.state === 'yawn') {
+      this.enter(context.needs.energy < 30 ? 'sleep' : 'sit');
+      return;
+    }
+    if (this.state === 'sniff') {
+      this.enter('groom');
+      return;
+    }
+    if (['stretch', 'wake', 'land', 'sulk', 'stumble', 'observe', 'wave', 'hop'].includes(this.state)) {
       this.enter(context.settings.focusMode ? 'sit' : 'idle');
       return;
     }
@@ -187,6 +197,8 @@ export class CatBehavior {
       idle: 3, sit: 3 + hunger * 6, walk: 2, sleep: 0.5 + (1 - energy) * 14,
       groom: 1 + (1 - affection) * 2,
       happy: (1 - affection) * 1.5, play: energy * 1.5, stretch: 0.5,
+      observe: .9, yawn: .2 + (1 - energy) * 1.2, sniff: .6 + hunger * .7,
+      wave: .4 + (1 - affection) * .6, hop: energy >= .35 ? energy * .6 : 0,
     };
     if (this.character === 'gugugaga') { weights.stumble = .07; weights.groom = .5; }
     const personality: Personality = settings.personality;
@@ -195,14 +207,18 @@ export class CatBehavior {
       weights.sleep = (weights.sleep ?? 0) * 1.3;
       weights.walk = (weights.walk ?? 0) * 0.6;
       weights.play = (weights.play ?? 0) * 0.5;
+      weights.observe = (weights.observe ?? 0) * 1.5;
+      weights.hop = (weights.hop ?? 0) * .5;
     } else if (personality === 'affectionate') {
       weights.groom = (weights.groom ?? 0) * 2;
       weights.happy = (weights.happy ?? 0) * 2.5;
+      weights.wave = (weights.wave ?? 0) * 2.5;
       if (this.canApproach(context)) weights.walk = (weights.walk ?? 0) * (2.8 + (1 - affection) * 1.2);
     } else {
       weights.walk = (weights.walk ?? 0) * 2.5;
       weights.play = (weights.play ?? 0) * 3;
       weights.sleep = (weights.sleep ?? 0) * 0.75;
+      weights.hop = (weights.hop ?? 0) * 3;
     }
     for (const state of Object.keys(weights) as PetState[]) {
       if (state === this.state || this.elapsed < (this.nextAutonomous[state] ?? 0)) weights[state] = 0;
@@ -285,9 +301,9 @@ export class CatBehavior {
     const centerY = desktop.y + desktop.height / 2;
     const distanceX = physicalToLogical(desktop.cursor.x - centerX, desktop.scale);
     const distanceY = physicalToLogical(desktop.cursor.y - centerY, desktop.scale);
-    const lookX = context.settings.followMouse && !context.settings.focusMode
+    const lookX = this.state === 'observe' ? Math.sin(this.stateTime * 2.1) * .85 : context.settings.followMouse && !context.settings.focusMode
       ? Math.max(-1, Math.min(1, distanceX / 180)) : 0;
-    const lookY = context.settings.followMouse && !context.settings.focusMode
+    const lookY = this.state === 'observe' ? -Math.sin(this.stateTime * 1.05) * .4 : context.settings.followMouse && !context.settings.focusMode
       ? Math.max(-1, Math.min(1, distanceY / 140)) : 0;
     return {
       state: this.state, time: this.stateTime, direction: this.direction,

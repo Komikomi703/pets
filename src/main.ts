@@ -35,6 +35,7 @@ async function boot(container: HTMLElement) {
     const descriptions: Record<PetState, string> = {
       idle: 'くつろぐ猫', walk: '歩く猫', sit: '座る猫', sleep: '眠る猫', stretch: '伸びをする猫',
       groom: '毛づくろいする猫', happy: '喜ぶ猫', eat: 'ごはんを食べる猫', play: '遊ぶ猫', dragged: '抱き上げられた姿', sulk: '拗ねる', land: '着地', wake: '目覚め', stumble: 'つまずく',
+      observe: 'きょろきょろ見回す', yawn: 'あくびをする', sniff: '匂いをかぐ', wave: '手を振る', hop: '小さくジャンプ',
     };
     (character === 'cat' ? CAT_STATES : PET_STATES).forEach(state => {
       const card = document.createElement('section');
